@@ -13,4 +13,14 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+// The default units used by this package:
+// Distance and Position: m (meter)
+// Time: s (second)
+// Speed: m / s (meter per second)
+// Acceleration: m / s^2 (meter per second squared)
+// Mass: kg (kilogram)
+// Force: N or kg*m / s^2 (Newton)
+// Temperature: K (Kelvin)
+// Heat: J or kg*m^2 / s^2 (Joules)
 package molecular

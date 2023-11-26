@@ -30,7 +30,7 @@ func TestBoxOverlap(t *testing.T) {
 		o := d.A.OverlapBox(d.B, area)
 		if o2 := d.A.Overlap(d.B); o != o2 {
 			t.Fatalf("Overlap results not synced for cubes %v & %v. OverlapBox=%v, Overlap=%v", d.A, d.B, o, o2)
-		}else if o {
+		} else if o {
 			if d.Area == nil {
 				t.Errorf("Unexpected overlap area %v for cubes %v & %v", area, d.A, d.B)
 			} else if !d.Area.Equals(area) {

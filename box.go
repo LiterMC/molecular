@@ -41,15 +41,15 @@ func (b *Cube) Size() Vec {
 }
 
 func (b *Cube) EndPos() Vec {
-	return b.P.Add(b.S)
+	return b.P.Added(b.S)
 }
 
 // Overlap will return if the two Cube overlapped or not
 func (b *Cube) Overlap(x *Cube) bool {
 	p1, p2 := b.Pos(), b.EndPos()
 	q1, q2 := x.Pos(), x.EndPos()
-	a1, a2 := q1.Sub(p1), p2.Sub(q1)
-	b1, b2 := q2.Sub(p1), p2.Sub(q2)
+	a1, a2 := q1.Subbed(p1), p2.Subbed(q1)
+	b1, b2 := q2.Subbed(p1), p2.Subbed(q2)
 	return (a1.X >= 0 && a2.X >= 0 || b1.X >= 0 && b2.X >= 0) &&
 		(a1.Y >= 0 && a2.Y >= 0 || b1.Y >= 0 && b2.Y >= 0) &&
 		(a1.Z >= 0 && a2.Z >= 0 || b1.Z >= 0 && b2.Z >= 0)
@@ -62,8 +62,8 @@ func (b *Cube) Overlap(x *Cube) bool {
 func (b *Cube) OverlapBox(x *Cube, area *Cube) bool {
 	p1, p2 := b.Pos(), b.EndPos()
 	q1, q2 := x.Pos(), x.EndPos()
-	a1, a2 := q1.Sub(p1), p2.Sub(q1)
-	b1, b2 := q2.Sub(p1), p2.Sub(q2)
+	a1, a2 := q1.Subbed(p1), p2.Subbed(q1)
+	b1, b2 := q2.Subbed(p1), p2.Subbed(q2)
 	if a1.X >= 0 && a2.X >= 0 { // p1-q1-[q2]-p2-[q2]
 		area.P.X = a1.X
 		if b2.X >= 0 { // p1-q1-q2-p2

@@ -10,10 +10,18 @@ type Vec struct {
 }
 
 var (
-	ZeroVec Vec
-	OneVec Vec = Vec{1, 1, 1}
+	ZeroVec   Vec
+	OneVec    Vec = Vec{1, 1, 1}
 	NegOneVec Vec = Vec{-1, -1, -1}
 )
+
+func (v *Vec) Clone() *Vec {
+	return &Vec{
+		X: v.X,
+		Y: v.Y,
+		Z: v.Z,
+	}
+}
 
 func (v Vec) String() string {
 	return fmt.Sprintf("Vec(%v, %v, %v)", v.X, v.Y, v.Z)
@@ -44,7 +52,14 @@ func (v Vec) Abs() Vec {
 	}
 }
 
-func (v Vec) Map(m func(float64) float64) Vec {
+func (v *Vec) Map(m func(float64) float64) *Vec {
+	v.X = m(v.X)
+	v.Y = m(v.Y)
+	v.Z = m(v.Z)
+	return v
+}
+
+func (v Vec) Mapped(m func(float64) float64) Vec {
 	return Vec{
 		X: m(v.X),
 		Y: m(v.Y),
@@ -52,8 +67,16 @@ func (v Vec) Map(m func(float64) float64) Vec {
 	}
 }
 
-// Reversed is a shortcut of ScaledN(-1)
-func (v Vec) Reversed() Vec {
+// Negate is a shortcut of ScaleN(-1)
+func (v *Vec) Negate() *Vec {
+	v.X = -v.X
+	v.Y = -v.Y
+	v.Z = -v.Z
+	return v
+}
+
+// Negated is a shortcut of ScaledN(-1)
+func (v Vec) Negated() Vec {
 	return Vec{
 		X: -v.X,
 		Y: -v.Y,
@@ -61,7 +84,14 @@ func (v Vec) Reversed() Vec {
 	}
 }
 
-func (v Vec) Add(u Vec) Vec {
+func (v *Vec) Add(u Vec) *Vec {
+	v.X += u.X
+	v.Y += u.Y
+	v.Z += u.Z
+	return v
+}
+
+func (v Vec) Added(u Vec) Vec {
 	return Vec{
 		X: v.X + u.X,
 		Y: v.Y + u.Y,
@@ -69,12 +99,26 @@ func (v Vec) Add(u Vec) Vec {
 	}
 }
 
-func (v Vec) Sub(u Vec) Vec {
+func (v *Vec) Sub(u Vec) *Vec {
+	v.X -= u.X
+	v.Y -= u.Y
+	v.Z -= u.Z
+	return v
+}
+
+func (v Vec) Subbed(u Vec) Vec {
 	return Vec{
 		X: v.X - u.X,
 		Y: v.Y - u.Y,
 		Z: v.Z - u.Z,
 	}
+}
+
+func (v *Vec) Scale(u Vec) *Vec {
+	v.X *= u.X
+	v.Y *= u.Y
+	v.Z *= u.Z
+	return v
 }
 
 func (v Vec) Scaled(u Vec) Vec {
@@ -85,6 +129,13 @@ func (v Vec) Scaled(u Vec) Vec {
 	}
 }
 
+func (v *Vec) ScaleN(n float64) *Vec {
+	v.X *= n
+	v.Y *= n
+	v.Z *= n
+	return v
+}
+
 func (v Vec) ScaledN(n float64) Vec {
 	return Vec{
 		X: v.X * n,
@@ -93,8 +144,18 @@ func (v Vec) ScaledN(n float64) Vec {
 	}
 }
 
-// Unit returns a vector of length 1 facing the direction of u with the same angle.
-func (v Vec) Unit() Vec {
+// Normalize make the length of the vector to 1 and keep the current direction.
+func (v *Vec) Normalize() *Vec {
+	if v.IsZero() {
+		v.X = 1
+	} else {
+		v.ScaleN(1 / v.Len())
+	}
+	return v
+}
+
+// Normalized returns a vector of length 1 facing the direction of u with the same angle.
+func (v Vec) Normalized() Vec {
 	if v.IsZero() {
 		return Vec{1, 0, 0}
 	}
@@ -133,6 +194,30 @@ func (v Vec) AngleY() float64 {
 //	  |  X
 func (v Vec) AngleZ() float64 {
 	return math.Atan2(v.Y, v.X)
+}
+
+// Rotate around x-axis
+func (v *Vec) RotateX(angle float64) *Vec {
+	s, c := math.Sincos(angle)
+	v.Y = v.Y*c - v.Z*s
+	v.Z = v.Y*s + v.Z*c
+	return v
+}
+
+// Rotate around y-axis
+func (v *Vec) RotateY(angle float64) *Vec {
+	s, c := math.Sincos(angle)
+	v.X = v.Y*s + v.Z*c
+	v.Z = v.Y*c - v.Z*s
+	return v
+}
+
+// Rotate around z-axis
+func (v *Vec) RotateZ(angle float64) *Vec {
+	s, c := math.Sincos(angle)
+	v.X = v.X*c - v.Y*s
+	v.Y = v.X*s + v.Y*c
+	return v
 }
 
 // Rotate around x-axis
