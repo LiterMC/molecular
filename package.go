@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+// molecule is a 3D physics engine that designed for realistic gravity
+//
 // The default units used by this package:
 // Distance and Position: m (meter)
 // Time: s (second)
