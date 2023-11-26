@@ -1,7 +1,9 @@
 package molecular
 
 type Config struct {
+	// MinSpeed means the minimum positive speed
 	MinSpeed float64
+	// MaxSpeed means the maximum positive speed
 	MaxSpeed float64
 }
 
@@ -17,4 +19,8 @@ func NewEngine(cfg Config) *Engine {
 
 func (e *Engine) Config() Config {
 	return e.cfg
+}
+
+func (e *Engine) Tick(dt float64) {
+	// TODO
 }
