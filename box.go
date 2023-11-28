@@ -1,11 +1,11 @@
 package molecular
 
 type Cube struct {
-	P Vec // Pos
-	S Vec // Size
+	P Vec3 // Pos
+	S Vec3 // Size
 }
 
-func NewCube(pos, size Vec) (b *Cube) {
+func NewCube(pos, size Vec3) (b *Cube) {
 	if size.X < 0 {
 		pos.X += size.X
 		size.X = -size.X
@@ -32,15 +32,15 @@ func (b *Cube) Equals(x *Cube) bool {
 	return b.P == x.P && b.S == x.S
 }
 
-func (b *Cube) Pos() Vec {
+func (b *Cube) Pos() Vec3 {
 	return b.P
 }
 
-func (b *Cube) Size() Vec {
+func (b *Cube) Size() Vec3 {
 	return b.S
 }
 
-func (b *Cube) EndPos() Vec {
+func (b *Cube) EndPos() Vec3 {
 	return b.P.Added(b.S)
 }
 

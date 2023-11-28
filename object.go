@@ -2,38 +2,54 @@ package molecular
 
 import (
 	"math"
+	"sync"
 
 	"github.com/google/uuid"
 )
 
-// Object represents an object in the physics engine
-// If the object is a main anchor, it's position will always be zero,
-// and it should not contains any block
-// Only the objects that have GravityField can become an sub-anchor
+// Object represents an object in the physics engine.
 type Object struct {
-	id      uuid.UUID // a v7 UUID
-	attachs set[*Object]
-	anchor  *Object
-	pos     Vec // the position relative to the anchor
-	facing  Vec
-	blocks  []Block
-	speed   Vec
-	field   *GravityField
+	mux              sync.RWMutex
+	e                *Engine
+	id               uuid.UUID // a v7 UUID
+	anchor           *Object
+	attachs          set[*Object]
+	blocks           []Block
+	gcenter          Vec3 // the gravity center
+	gfield           *GravityField
+	pitch, yaw, roll float64
+	pos              Vec3 // the position relative to the anchor
+	tickForce        Vec3
+	velocity         Vec3
 }
 
-func newObject(id uuid.UUID, anchor *Object, pos Vec) (o *Object) {
+func (e *Engine) newAndPutObject(id uuid.UUID, anchor *Object, pos Vec3) (o *Object) {
+	if anchor == nil {
+		anchor = e.mainAnchor
+	}
 	o = &Object{
+		e:       e,
 		id:      id,
-		attachs: make(set[*Object], 10),
 		anchor:  anchor,
+		attachs: make(set[*Object], 10),
 		pos:     pos,
 	}
 	anchor.attachs.Put(o)
+	if _, ok := e.objects[id]; ok {
+		panic("molecular.Engine: Object id " + id.String() + " is already exists")
+	}
+	e.objects[id] = o
 	return
 }
 
+// An object's id will never be changed
 func (o *Object) Id() uuid.UUID {
 	return o.id
+}
+
+// Engine returns the engine of the object
+func (o *Object) Engine() *Engine {
+	return o.e
 }
 
 // Attachs returns all the objects that anchored to this object directly
@@ -48,35 +64,70 @@ func (o *Object) Anchor() *Object {
 }
 
 // Pos returns the position relative to the anchor
-func (o *Object) Pos() Vec {
-	if o.anchor == nil {
-		return ZeroVec
-	}
+func (o *Object) Pos() Vec3 {
 	return o.pos
 }
 
 // SetPos sets the position relative to the anchor
-func (o *Object) SetPos(pos Vec) {
+func (o *Object) SetPos(pos Vec3) {
 	o.pos = pos
 }
 
-func (o *Object) Facing() Vec {
-	if o.anchor == nil {
-		return ZeroVec
+// AttachTo will change the object's anchor to another.
+// The new position will be calculated at the same time.
+func (o *Object) AttachTo(anchor *Object) {
+	if anchor == nil {
+		panic("molecular.Object: new anchor cannot be nil")
 	}
-	return o.facing
+	if o.anchor == nil {
+		panic("molecular.Object: cannot attach main anchor")
+	}
+	p1, p2 := o.AbsPos(), anchor.AbsPos()
+	o.pos = p1.Subbed(p2)
+	o.anchor.mux.Lock()
+	o.anchor.attachs.Remove(o)
+	o.anchor.mux.Unlock()
+	anchor.mux.Lock()
+	anchor.attachs.Put(o)
+	anchor.mux.Unlock()
+	o.anchor = anchor
 }
 
-func (o *Object) SetFacing(f Vec) {
-	o.facing = f
+// forEachAnchor will invoke the callback function on each anchor object.
+// forEachAnchor will lock the reader locker for the anchors.
+func (o *Object) forEachAnchor(cb func(*Object)) {
+	o.mux.RLock()
+	defer o.mux.RUnlock()
+
+	if o.anchor == nil {
+		return
+	}
+	cb(o.anchor)
+	o.anchor.forEachAnchor(cb)
 }
 
-func (o *Object) Speed() Vec {
-	return o.speed
+// AbsPos returns the position relative to the main anchor
+func (o *Object) AbsPos() (p Vec3) {
+	o.mux.RLock()
+	if o.anchor == nil {
+		o.mux.RUnlock()
+		return
+	}
+	p = o.pos
+	o.mux.RUnlock()
+
+	o.forEachAnchor(func(a *Object) {
+		p.Add(a.pos)
+	})
+	return
 }
 
-func (o *Object) SetSpeed(speed Vec) {
-	o.speed = speed
+func (o *Object) Velocity() Vec3 {
+	return o.velocity
+}
+
+func (o *Object) SetVelocity(velocity Vec3) {
+	o.velocity = velocity
 }
 
 func (o *Object) Blocks() []Block {
@@ -91,55 +142,78 @@ func (o *Object) AddBlock(b Block) {
 	o.blocks = append(o.blocks, b)
 }
 
-// AbsPos returns the position relative to the main anchor
-func (o *Object) AbsPos() Vec {
-	if o.anchor == nil {
-		return ZeroVec
-	}
-	return o.anchor.AbsPos().Added(o.pos)
+// TickForce returns the force vector that can be edit during a tick.
+// You should never read/write the vector concurrently or outside a tick.
+func (o *Object) TickForce() *Vec3 {
+	return &o.tickForce
 }
 
-// AttachTo will change the object's anchor to another.
-// The new position will be calculated at the same time.
-func (o *Object) AttachTo(anchor *Object) {
-	if anchor == nil {
-		panic("molecular.Object: new anchor cannot be nil")
-	}
-	if o.anchor == nil {
-		panic("molecular.Object: cannot attach main anchor")
-	}
-	p1, p2 := o.AbsPos(), anchor.AbsPos()
-	o.anchor.attachs.Remove(o)
-	o.anchor = anchor
-	o.pos = p1.Subbed(p2)
-	anchor.attachs.Put(o)
+// GField returns the gravitational field
+func (o *Object) GField() *GravityField {
+	return o.gfield
 }
 
-func (o *Object) tick(dt float64, e *Engine) {
-	if o.anchor == nil {
-		return
+// SetGField sets the gravitational field
+func (o *Object) SetGField(field *GravityField) {
+	o.gfield = field
+}
+
+func (o *Object) _tick(dt float64) {
+	vel := o.velocity
+	vl := vel.Len()
+	if o.e.cfg.MaxSpeed > 0 {
+		vl = math.Min(o.e.cfg.MaxSpeed, vl)
+	}
+	pt := o.e.ProperTime(dt, vl)
+
+	// reset the state
+	o.tickForce = ZeroVec
+	{ // apply the gravity
+		p := o.pos
+		o.forEachAnchor(func(a *Object) {
+			if a.gfield != nil {
+				f := a.gfield.FieldAt(p.Subbed(a.gcenter))
+				f.ScaledN(dt)
+				o.velocity.Add(f)
+			}
+			p.Add(a.pos)
+		})
 	}
 
-	speed := o.speed.Len()
-	if e.cfg.MaxSpeed > 0 {
-		speed = math.Min(e.cfg.MaxSpeed, speed)
-	}
-	dt = e.RelativeDeltaTime(dt, speed)
+	// TODO: update gcenter
 
 	mass := 0.0
 	for _, b := range o.blocks {
-		b.Tick(dt)
+		b.Tick(pt, o)
 		mass += b.Mass()
 	}
+	if mass > 0 {
+		o.velocity.Add(o.e.AccFromForce(mass, o.velocity.Len(), o.tickForce))
+	}
+	if o.gfield != nil {
+		o.gfield.SetMass(mass)
+	}
 
-	o.pos.Add(o.speed.ScaledN(dt))
+	if vl > o.e.cfg.MinSpeed {
+		o.pos.Add(vel.ScaledN(dt))
+	}
 }
 
-// Tick will tick the object and it's attachments.
-func (o *Object) Tick(dt float64, e *Engine) {
-	o.tick(dt, e)
+// tick will tick the object itself and it's attachments concurrently
+// it will call wg.Done when exit
+func (o *Object) tick(wg *sync.WaitGroup, dt float64, e *Engine) {
+	defer wg.Done()
 
+	o.mux.RLock()
 	for a := range o.attachs {
-		a.Tick(dt, e)
+		wg.Add(1)
+		go a.tick(wg, dt, e)
+	}
+	o.mux.RUnlock()
+
+	if o.anchor != nil { // only tick on non-main anchor
+		o.mux.Lock()
+		defer o.mux.Unlock()
+		o._tick(dt)
 	}
 }

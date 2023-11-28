@@ -8,7 +8,7 @@ type GravityField struct {
 	mass float64
 }
 
-func NewGravityField(pos Vec, mass float64) *GravityField {
+func NewGravityField(pos Vec3, mass float64) *GravityField {
 	return &GravityField{
 		mass: mass,
 	}
@@ -23,7 +23,7 @@ func (f *GravityField) SetMass(mass float64) {
 }
 
 // FieldAt returns the acceleration at the distance due to the gravity field
-func (f *GravityField) FieldAt(distance Vec) Vec {
+func (f *GravityField) FieldAt(distance Vec3) Vec3 {
 	l := distance.Len()
 	if l == 0 {
 		return ZeroVec
@@ -55,7 +55,7 @@ func (f *MagnetField) SetPower(power float64) {
 	f.power = power
 }
 
-func (f *MagnetField) FieldAt(distance Vec) Vec {
+func (f *MagnetField) FieldAt(distance Vec3) Vec3 {
 	l := distance.Len()
 	if l == 0 {
 		return ZeroVec

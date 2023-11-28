@@ -5,62 +5,66 @@ import (
 	"math"
 )
 
-type Vec struct {
+type Vec3 struct {
 	X, Y, Z float64
 }
 
 var (
-	ZeroVec   Vec
-	OneVec    Vec = Vec{1, 1, 1}
-	NegOneVec Vec = Vec{-1, -1, -1}
+	ZeroVec   Vec3
+	OneVec    Vec3 = Vec3{1, 1, 1}
+	NegOneVec Vec3 = Vec3{-1, -1, -1}
 )
 
-func (v *Vec) Clone() *Vec {
-	return &Vec{
+func (v *Vec3) Clone() *Vec3 {
+	return &Vec3{
 		X: v.X,
 		Y: v.Y,
 		Z: v.Z,
 	}
 }
 
-func (v Vec) String() string {
-	return fmt.Sprintf("Vec(%v, %v, %v)", v.X, v.Y, v.Z)
+func (v Vec3) String() string {
+	return fmt.Sprintf("Vec3(%v, %v, %v)", v.X, v.Y, v.Z)
 }
 
-func (v Vec) XYZ() (x, y, z float64) {
+func (v Vec3) XYZ() (x, y, z float64) {
 	return v.X, v.Y, v.Z
 }
 
-func (v Vec) IsZero() bool {
+func (v Vec3) IsZero() bool {
 	return v.X == 0 && v.Y == 0 && v.Z == 0
 }
 
-func (v Vec) Len() float64 {
+func (v Vec3) Equals(u Vec3) bool {
+	return v.X == u.X && v.Y == u.Y && v.Z == u.Z
+}
+
+func (v Vec3) Len() float64 {
 	return math.Sqrt(v.SqLen())
 }
 
 // Squared length
-func (v Vec) SqLen() float64 {
+func (v Vec3) SqLen() float64 {
 	return v.X*v.X + v.Y*v.Y + v.Z*v.Z
 }
 
-func (v Vec) Abs() Vec {
-	return Vec{
+func (v Vec3) Abs() Vec3 {
+	return Vec3{
 		X: math.Abs(v.X),
 		Y: math.Abs(v.Y),
 		Z: math.Abs(v.Z),
 	}
 }
 
-func (v *Vec) Map(m func(float64) float64) *Vec {
+func (v *Vec3) Map(m func(float64) float64) *Vec3 {
 	v.X = m(v.X)
 	v.Y = m(v.Y)
 	v.Z = m(v.Z)
 	return v
 }
 
-func (v Vec) Mapped(m func(float64) float64) Vec {
-	return Vec{
+func (v Vec3) Mapped(m func(float64) float64) Vec3 {
+	return Vec3{
 		X: m(v.X),
 		Y: m(v.Y),
 		Z: m(v.Z),
@@ -68,7 +72,7 @@ func (v Vec) Mapped(m func(float64) float64) Vec {
 }
 
 // Negate is a shortcut of ScaleN(-1)
-func (v *Vec) Negate() *Vec {
+func (v *Vec3) Negate() *Vec3 {
 	v.X = -v.X
 	v.Y = -v.Y
 	v.Z = -v.Z
@@ -76,68 +80,68 @@ func (v *Vec) Negate() *Vec {
 }
 
 // Negated is a shortcut of ScaledN(-1)
-func (v Vec) Negated() Vec {
-	return Vec{
+func (v Vec3) Negated() Vec3 {
+	return Vec3{
 		X: -v.X,
 		Y: -v.Y,
 		Z: -v.Z,
 	}
 }
 
-func (v *Vec) Add(u Vec) *Vec {
+func (v *Vec3) Add(u Vec3) *Vec3 {
 	v.X += u.X
 	v.Y += u.Y
 	v.Z += u.Z
 	return v
 }
 
-func (v Vec) Added(u Vec) Vec {
-	return Vec{
+func (v Vec3) Added(u Vec3) Vec3 {
+	return Vec3{
 		X: v.X + u.X,
 		Y: v.Y + u.Y,
 		Z: v.Z + u.Z,
 	}
 }
 
-func (v *Vec) Sub(u Vec) *Vec {
+func (v *Vec3) Sub(u Vec3) *Vec3 {
 	v.X -= u.X
 	v.Y -= u.Y
 	v.Z -= u.Z
 	return v
 }
 
-func (v Vec) Subbed(u Vec) Vec {
-	return Vec{
+func (v Vec3) Subbed(u Vec3) Vec3 {
+	return Vec3{
 		X: v.X - u.X,
 		Y: v.Y - u.Y,
 		Z: v.Z - u.Z,
 	}
 }
 
-func (v *Vec) Scale(u Vec) *Vec {
+func (v *Vec3) Scale(u Vec3) *Vec3 {
 	v.X *= u.X
 	v.Y *= u.Y
 	v.Z *= u.Z
 	return v
 }
 
-func (v Vec) Scaled(u Vec) Vec {
-	return Vec{
+func (v Vec3) Scaled(u Vec3) Vec3 {
+	return Vec3{
 		X: v.X * u.X,
 		Y: v.Y * u.Y,
 		Z: v.Z * u.Z,
 	}
 }
 
-func (v *Vec) ScaleN(n float64) *Vec {
+func (v *Vec3) ScaleN(n float64) *Vec3 {
 	v.X *= n
 	v.Y *= n
 	v.Z *= n
 	return v
 }
 
-func (v Vec) ScaledN(n float64) Vec {
-	return Vec{
+func (v Vec3) ScaledN(n float64) Vec3 {
+	return Vec3{
 		X: v.X * n,
 		Y: v.Y * n,
 		Z: v.Z * n,
@@ -145,7 +149,7 @@ func (v Vec) ScaledN(n float64) Vec {
 }
 
 // Normalize make the length of the vector to 1 and keep the current direction.
-func (v *Vec) Normalize() *Vec {
+func (v *Vec3) Normalize() *Vec3 {
 	if v.IsZero() {
 		v.X = 1
 	} else {
@@ -155,14 +159,14 @@ func (v *Vec) Normalize() *Vec {
 }
 
 // Normalized returns a vector of length 1 facing the direction of u with the same angle.
-func (v Vec) Normalized() Vec {
+func (v Vec3) Normalized() Vec3 {
 	if v.IsZero() {
-		return Vec{1, 0, 0}
+		return Vec3{1, 0, 0}
 	}
 	return v.ScaledN(1 / v.Len())
 }
 
-func (v Vec) Dot(u Vec) float64 {
+func (v Vec3) Dot(u Vec3) float64 {
 	return v.X*u.X + v.Y*u.Y + v.Z*u.Z
 }
 
@@ -172,7 +176,7 @@ func (v Vec) Dot(u Vec) float64 {
 //	  |/
 //	--+-->
 //	  |  Y
-func (v Vec) AngleX() float64 {
+func (v Vec3) AngleX() float64 {
 	return math.Atan2(v.Z, v.Y)
 }
 
@@ -182,7 +186,7 @@ func (v Vec) AngleX() float64 {
 //	  |/
 //	--+-->
 //	  |  Z
-func (v Vec) AngleY() float64 {
+func (v Vec3) AngleY() float64 {
 	return math.Atan2(v.X, v.Z)
 }
 
@@ -192,12 +196,12 @@ func (v Vec) AngleY() float64 {
 //	  |/
 //	--+-->
 //	  |  X
-func (v Vec) AngleZ() float64 {
+func (v Vec3) AngleZ() float64 {
 	return math.Atan2(v.Y, v.X)
 }
 
 // Rotate around x-axis
-func (v *Vec) RotateX(angle float64) *Vec {
+func (v *Vec3) RotateX(angle float64) *Vec3 {
 	s, c := math.Sincos(angle)
 	v.Y = v.Y*c - v.Z*s
 	v.Z = v.Y*s + v.Z*c
@@ -205,7 +209,7 @@ func (v *Vec) RotateX(angle float64) *Vec {
 }
 
 // Rotate around y-axis
-func (v *Vec) RotateY(angle float64) *Vec {
+func (v *Vec3) RotateY(angle float64) *Vec3 {
 	s, c := math.Sincos(angle)
 	v.X = v.Y*s + v.Z*c
 	v.Z = v.Y*c - v.Z*s
@@ -213,7 +217,7 @@ func (v *Vec) RotateY(angle float64) *Vec {
 }
 
 // Rotate around z-axis
-func (v *Vec) RotateZ(angle float64) *Vec {
+func (v *Vec3) RotateZ(angle float64) *Vec3 {
 	s, c := math.Sincos(angle)
 	v.X = v.X*c - v.Y*s
 	v.Y = v.X*s + v.Y*c
@@ -221,9 +225,9 @@ func (v *Vec) RotateZ(angle float64) *Vec {
 }
 
 // Rotate around x-axis
-func (v Vec) RotatedX(angle float64) Vec {
+func (v Vec3) RotatedX(angle float64) Vec3 {
 	s, c := math.Sincos(angle)
-	return Vec{
+	return Vec3{
 		X: v.X,
 		Y: v.Y*c - v.Z*s,
 		Z: v.Y*s + v.Z*c,
@@ -231,9 +235,9 @@ func (v Vec) RotatedX(angle float64) Vec {
 }
 
 // Rotate around y-axis
-func (v Vec) RotatedY(angle float64) Vec {
+func (v Vec3) RotatedY(angle float64) Vec3 {
 	s, c := math.Sincos(angle)
-	return Vec{
+	return Vec3{
 		X: v.Y*s + v.Z*c,
 		Y: v.Y,
 		Z: v.Y*c - v.Z*s,
@@ -241,16 +245,161 @@ func (v Vec) RotatedY(angle float64) Vec {
 }
 
 // Rotate around z-axis
-func (v Vec) RotatedZ(angle float64) Vec {
+func (v Vec3) RotatedZ(angle float64) Vec3 {
 	s, c := math.Sincos(angle)
-	return Vec{
+	return Vec3{
 		X: v.X*c - v.Y*s,
 		Y: v.X*s + v.Y*c,
 		Z: v.Z,
 	}
 }
 
-// Volume returns X * Y * Z
-func (v Vec) Volume() float64 {
-	return v.X * v.Y * v.Z
+type Vec4 struct {
+	T, X, Y, Z float64
+}
+
+func (v Vec4) String() string {
+	return fmt.Sprintf("Vec4(%v, %v, %v, %v)", v.T, v.X, v.Y, v.Z)
+}
+
+func (v Vec4) XYZ() (x, y, z float64) {
+	return v.X, v.Y, v.Z
+}
+
+func (v Vec4) IsZero() bool {
+	return v.T == 0 && v.X == 0 && v.Y == 0 && v.Z == 0
+}
+
+func (v Vec4) Equals(u Vec4) bool {
+	return v.T == u.T && v.X == u.X && v.Y == u.Y && v.Z == u.Z
+}
+
+func (v Vec4) Len() float64 {
+	return math.Sqrt(v.SqLen())
+}
+
+// Squared length
+func (v Vec4) SqLen() float64 {
+	return v.T*v.T + v.X*v.X + v.Y*v.Y + v.Z*v.Z
+}
+
+func (v Vec4) To3() Vec3 {
+	return Vec3{
+		X: v.X,
+		Y: v.Y,
+		Z: v.Z,
+	}
+}
+
+func (v Vec4) Abs() Vec4 {
+	return Vec4{
+		T: math.Abs(v.T),
+		X: math.Abs(v.X),
+		Y: math.Abs(v.Y),
+		Z: math.Abs(v.Z),
+	}
+}
+
+func (v *Vec4) Map(m func(float64) float64) *Vec4 {
+	v.T = m(v.T)
+	v.X = m(v.X)
+	v.Y = m(v.Y)
+	v.Z = m(v.Z)
+	return v
+}
+
+func (v Vec4) Mapped(m func(float64) float64) Vec4 {
+	return Vec4{
+		T: m(v.T),
+		X: m(v.X),
+		Y: m(v.Y),
+		Z: m(v.Z),
+	}
+}
+
+// Negate is a shortcut of ScaleN(-1)
+func (v *Vec4) Negate() *Vec4 {
+	v.T = -v.T
+	v.X = -v.X
+	v.Y = -v.Y
+	v.Z = -v.Z
+	return v
+}
+
+// Negated is a shortcut of ScaledN(-1)
+func (v Vec4) Negated() Vec4 {
+	return Vec4{
+		T: -v.T,
+		X: -v.X,
+		Y: -v.Y,
+		Z: -v.Z,
+	}
+}
+
+func (v *Vec4) Add(u Vec4) *Vec4 {
+	v.T += u.T
+	v.X += u.X
+	v.Y += u.Y
+	v.Z += u.Z
+	return v
+}
+
+func (v Vec4) Added(u Vec4) Vec4 {
+	return Vec4{
+		T: v.T + u.T,
+		X: v.X + u.X,
+		Y: v.Y + u.Y,
+		Z: v.Z + u.Z,
+	}
+}
+
+func (v *Vec4) Sub(u Vec4) *Vec4 {
+	v.T -= u.T
+	v.X -= u.X
+	v.Y -= u.Y
+	v.Z -= u.Z
+	return v
+}
+
+func (v Vec4) Subbed(u Vec4) Vec4 {
+	return Vec4{
+		T: v.T - u.T,
+		X: v.X - u.X,
+		Y: v.Y - u.Y,
+		Z: v.Z - u.Z,
+	}
+}
+
+func (v *Vec4) Scale(u Vec4) *Vec4 {
+	v.T *= u.T
+	v.X *= u.X
+	v.Y *= u.Y
+	v.Z *= u.Z
+	return v
+}
+
+func (v Vec4) Scaled(u Vec4) Vec4 {
+	return Vec4{
+		T: v.T * u.T,
+		X: v.X * u.X,
+		Y: v.Y * u.Y,
+		Z: v.Z * u.Z,
+	}
+}
+
+func (v *Vec4) ScaleN(n float64) *Vec4 {
+	v.T *= n
+	v.X *= n
+	v.Y *= n
+	v.Z *= n
+	return v
+}
+
+func (v Vec4) ScaledN(n float64) Vec4 {
+	return Vec4{
+		T: v.T * n,
+		X: v.X * n,
+		Y: v.Y * n,
+		Z: v.Z * n,
+	}
 }
