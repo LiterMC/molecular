@@ -1,11 +1,33 @@
 package molecular
 
 import (
+	"fmt"
 	"math"
 	"sync"
 
 	"github.com/google/uuid"
 )
+
+type ObjType uint8
+
+const (
+	ManMadeObj ObjType = 0
+	NaturalObj ObjType = 1
+	LivingObj  ObjType = 2
+)
+
+func (t ObjType) String() string {
+	switch t {
+	case ManMadeObj:
+		return "man-made"
+	case NaturalObj:
+		return "natural"
+	case LivingObj:
+		return "living"
+	default:
+		panic("Unknown object type value")
+	}
+}
 
 // Object represents an object in the physics engine.
 type Object struct {
@@ -14,6 +36,7 @@ type Object struct {
 	id               uuid.UUID // a v7 UUID
 	anchor           *Object
 	attachs          set[*Object]
+	typ              ObjType
 	blocks           []Block
 	gcenter          Vec3 // the gravity center
 	gfield           *GravityField
@@ -40,6 +63,15 @@ func (e *Engine) newAndPutObject(id uuid.UUID, anchor *Object, pos Vec3) (o *Obj
 	}
 	e.objects[id] = o
 	return
+}
+
+func (o *Object) String() string {
+	return fmt.Sprintf(`Object[%s]{
+	anchor=%s,
+	pos=%v,
+	facing=(pitch=%v, yaw=%v, roll=%v),
+	type=%s,
+}`, o.id, o.anchor, o.pos, o.pitch, o.yaw, o.roll, o.typ)
 }
 
 // An object's id will never be changed
@@ -130,6 +162,14 @@ func (o *Object) SetVelocity(velocity Vec3) {
 	o.velocity = velocity
 }
 
+func (o *Object) Type() ObjType {
+	return o.typ
+}
+
+func (o *Object) SetType(t ObjType) {
+	o.typ = t
+}
+
 func (o *Object) Blocks() []Block {
 	return o.blocks
 }
@@ -190,7 +230,7 @@ func (o *Object) _tick(dt float64) {
 	if mass > 0 {
 		o.velocity.Add(o.e.AccFromForce(mass, o.velocity.Len(), o.tickForce))
 	}
-	if o.gfield != nil {
+	if o.gfield != nil && o.typ == ManMadeObj {
 		o.gfield.SetMass(mass)
 	}
 
