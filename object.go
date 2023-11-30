@@ -2,8 +2,6 @@ package molecular
 
 import (
 	"fmt"
-	"math"
-	"sync"
 
 	"github.com/google/uuid"
 )
@@ -29,35 +27,80 @@ func (t ObjType) String() string {
 	}
 }
 
-// Object represents an object in the physics engine.
-type Object struct {
-	mux              sync.RWMutex
-	e                *Engine
-	id               uuid.UUID // a v7 UUID
+type objStatus struct {
 	anchor           *Object
-	attachs          set[*Object]
-	typ              ObjType
-	blocks           []Block
 	gcenter          Vec3 // the gravity center
 	gfield           *GravityField
 	pitch, yaw, roll float64
 	pos              Vec3 // the position relative to the anchor
 	tickForce        Vec3
 	velocity         Vec3
+	passedGravity    map[*Object]Vec3
 }
 
-func (e *Engine) newAndPutObject(id uuid.UUID, anchor *Object, pos Vec3) (o *Object) {
-	if anchor == nil {
-		anchor = e.mainAnchor
+func makeObjStatus() objStatus {
+	return objStatus{
+		passedGravity: make(map[*Object]Vec3, 5),
+	}
+}
+
+func (s *objStatus) from(a *objStatus) {
+	s.anchor = a.anchor
+	s.gcenter = a.gcenter
+	s.pitch = a.pitch
+	s.yaw = a.yaw
+	s.roll = a.roll
+	s.pos = a.pos
+	s.tickForce = a.tickForce
+	s.velocity = a.velocity
+	clear(s.passedGravity)
+	for k, v := range a.passedGravity {
+		s.passedGravity[k] = v
+	}
+	if a.gfield != nil {
+		if s.gfield == nil {
+			s.gfield = new(GravityField)
+		}
+		*s.gfield = *a.gfield
+	} else {
+		s.gfield = nil
+	}
+}
+
+func (s *objStatus) clone() (a objStatus) {
+	a = *s
+	if a.gfield != nil {
+		a.gfield = new(GravityField)
+		*a.gfield = *s.gfield
+	}
+	a.passedGravity = make(map[*Object]Vec3, len(s.passedGravity))
+	for k, v := range s.passedGravity {
+		a.passedGravity[k] = v
+	}
+	return
+}
+
+// Object represents an object in the physics engine.
+type Object struct {
+	e      *Engine
+	id     uuid.UUID // a v7 UUID
+	typ    ObjType
+	blocks []Block
+	objStatus
+
+	lastStatus objStatus
+}
+
+func (e *Engine) newAndPutObject(id uuid.UUID, stat objStatus) (o *Object) {
+	if stat.anchor == nil {
+		stat.anchor = e.mainAnchor
 	}
 	o = &Object{
-		e:       e,
-		id:      id,
-		anchor:  anchor,
-		attachs: make(set[*Object], 10),
-		pos:     pos,
+		e:          e,
+		id:         id,
+		objStatus:  stat,
+		lastStatus: stat.clone(),
 	}
-	anchor.attachs.Put(o)
 	if _, ok := e.objects[id]; ok {
 		panic("molecular.Engine: Object id " + id.String() + " is already exists")
 	}
@@ -66,12 +109,15 @@ func (e *Engine) newAndPutObject(id uuid.UUID, anchor *Object, pos Vec3) (o *Obj
 }
 
 func (o *Object) String() string {
+	if o.anchor == nil {
+		return "Object[MainAnchor]"
+	}
 	return fmt.Sprintf(`Object[%s]{
 	anchor=%s,
 	pos=%v,
 	facing=(pitch=%v, yaw=%v, roll=%v),
 	type=%s,
-}`, o.id, o.anchor, o.pos, o.pitch, o.yaw, o.roll, o.typ)
+}`, o.id, o.anchor.id, o.pos, o.pitch, o.yaw, o.roll, o.typ)
 }
 
 // An object's id will never be changed
@@ -82,11 +128,6 @@ func (o *Object) Id() uuid.UUID {
 // Engine returns the engine of the object
 func (o *Object) Engine() *Engine {
 	return o.e
-}
-
-// Attachs returns all the objects that anchored to this object directly
-func (o *Object) Attachs() []*Object {
-	return o.attachs.AsSlice()
 }
 
 // Anchor returns this object's anchor object
@@ -107,6 +148,7 @@ func (o *Object) SetPos(pos Vec3) {
 
 // AttachTo will change the object's anchor to another.
 // The new position will be calculated at the same time.
+// AttachTo must be called inside the object's tick
 func (o *Object) AttachTo(anchor *Object) {
 	if anchor == nil {
 		panic("molecular.Object: new anchor cannot be nil")
@@ -114,42 +156,44 @@ func (o *Object) AttachTo(anchor *Object) {
 	if o.anchor == nil {
 		panic("molecular.Object: cannot attach main anchor")
 	}
-	p1, p2 := o.AbsPos(), anchor.AbsPos()
-	o.pos = p1.Subbed(p2)
-	o.anchor.mux.Lock()
-	o.anchor.attachs.Remove(o)
-	o.anchor.mux.Unlock()
-	anchor.mux.Lock()
-	anchor.attachs.Put(o)
-	anchor.mux.Unlock()
-	o.anchor = anchor
-}
 
-// forEachAnchor will invoke the callback function on each anchor object.
-// forEachAnchor will lock the reader locker for the anchors.
-func (o *Object) forEachAnchor(cb func(*Object)) {
-	o.mux.RLock()
-	defer o.mux.RUnlock()
-
-	if o.anchor == nil {
+	if anchor == o.anchor {
 		return
 	}
-	cb(o.anchor)
-	o.anchor.forEachAnchor(cb)
+
+	var (
+		p = o.lastStatus.pos
+		v = o.lastStatus.velocity
+	)
+	p.Sub(anchor.lastStatus.pos)
+	v.Sub(anchor.lastStatus.velocity)
+	o.forEachAnchor(func(a *Object) {
+		p.Add(a.lastStatus.pos)
+		v.Add(a.lastStatus.velocity)
+	})
+	anchor.forEachAnchor(func(a *Object) {
+		p.Sub(a.lastStatus.pos)
+		v.Sub(a.lastStatus.velocity)
+	})
+	o.anchor = anchor
+	o.pos = p
+	o.velocity = v
+}
+
+// forEachAnchor will invoke the callback function on each anchor object
+func (o *Object) forEachAnchor(cb func(*Object)) {
+	if o.lastStatus.anchor == nil {
+		return
+	}
+	cb(o.lastStatus.anchor)
+	o.lastStatus.anchor.forEachAnchor(cb)
 }
 
 // AbsPos returns the position relative to the main anchor
 func (o *Object) AbsPos() (p Vec3) {
-	o.mux.RLock()
-	if o.anchor == nil {
-		o.mux.RUnlock()
-		return
-	}
-	p = o.pos
-	o.mux.RUnlock()
-
+	p = o.lastStatus.pos
 	o.forEachAnchor(func(a *Object) {
-		p.Add(a.pos)
+		p.Add(a.lastStatus.pos)
 	})
 	return
 }
@@ -160,6 +204,14 @@ func (o *Object) Velocity() Vec3 {
 
 func (o *Object) SetVelocity(velocity Vec3) {
 	o.velocity = velocity
+}
+
+func (o *Object) AbsVelocity() (v Vec3) {
+	v = o.lastStatus.velocity
+	o.forEachAnchor(func(a *Object) {
+		v.Add(a.lastStatus.velocity)
+	})
+	return
 }
 
 func (o *Object) Type() ObjType {
@@ -198,62 +250,100 @@ func (o *Object) SetGField(field *GravityField) {
 	o.gfield = field
 }
 
-func (o *Object) _tick(dt float64) {
+func (o *Object) tick(dt float64) {
 	vel := o.velocity
 	vl := vel.Len()
 	if o.e.cfg.MaxSpeed > 0 {
-		vl = math.Min(o.e.cfg.MaxSpeed, vl)
+		if vl > o.e.cfg.MaxSpeed {
+			vl = o.e.cfg.MaxSpeed
+		}
+	} else if vl >= C {
+		vl = 0
 	}
+	lf := o.e.LorentzFactor(vl)
 	pt := o.e.ProperTime(dt, vl)
 
 	// reset the state
 	o.tickForce = ZeroVec
-	{ // apply the gravity
-		p := o.pos
-		o.forEachAnchor(func(a *Object) {
-			if a.gfield != nil {
-				f := a.gfield.FieldAt(p.Subbed(a.gcenter))
-				f.ScaledN(dt)
-				o.velocity.Add(f)
-			}
-			p.Add(a.pos)
-		})
-	}
-
-	// TODO: update gcenter
+	o.gcenter = ZeroVec
 
 	mass := 0.0
-	for _, b := range o.blocks {
+	for i, b := range o.blocks {
 		b.Tick(pt, o)
-		mass += b.Mass()
+		l := b.Outline()
+		m := b.Mass()
+		mass += m
+		c := l.Center()
+		if i == 0 {
+			o.gcenter = c
+		} else {
+			o.gcenter.Add(c.Subbed(o.gcenter).ScaledN(m / mass))
+		}
+	}
+	{ // apply the gravity
+		factor := lf * mass
+		var (
+			largestL float64
+			largestO *Object
+		)
+		for a, f := range o.lastStatus.passedGravity {
+			f.ScaleN(factor)
+			if l := f.SqLen(); largestL < l {
+				largestL = l
+				largestO = a
+			}
+			o.tickForce.Add(f)
+		}
+		if largestO != nil {
+			o.AttachTo(largestO)
+		}
 	}
 	if mass > 0 {
-		o.velocity.Add(o.e.AccFromForce(mass, o.velocity.Len(), o.tickForce))
-	}
-	if o.gfield != nil && o.typ == ManMadeObj {
-		o.gfield.SetMass(mass)
+		o.velocity.Add(o.e.AccFromForce(mass, vl, o.tickForce).ScaledN(dt))
+	} else if mass < 0 {
+		mass = 0
 	}
 
-	if vl > o.e.cfg.MinSpeed {
-		o.pos.Add(vel.ScaledN(dt))
+	// (vi + vf) / 2 * ∆t
+	vel.Add(o.velocity)
+	vel.ScaleN(dt / 2)
+	if vel.SqLen() > o.e.cfg.MinSpeed*o.e.cfg.MinSpeed {
+		o.pos.Add(vel)
+	}
+
+	// queue gravity change event
+	gcenter := o.AbsPos()
+	gcenter.Add(o.gcenter)
+	if lastNil := o.lastStatus.gfield == nil; o.gfield != nil {
+		if o.typ == ManMadeObj {
+			if lastNil || mass != o.gfield.Mass() {
+				o.gfield.SetMass(mass)
+				var cb func(r *Object)
+				if mass == 0 {
+					cb = func(r *Object) {
+						delete(r.passedGravity, o)
+					}
+				}else{
+					g := *o.gfield
+					cb = func(r *Object) {
+						r.passedGravity[o] = g.FieldAt(r.AbsPos().Subbed(gcenter))
+					}
+				}
+				o.e.queueEvent(newEventWave(o, gcenter, -1, cb))
+			}
+		}else if lastNil {
+			g := *o.gfield
+			o.e.queueEvent(newEventWave(o, gcenter, -1, func(r *Object) {
+				r.passedGravity[o] = g.FieldAt(r.AbsPos().Subbed(gcenter))
+			}))
+		}
+	}else if !lastNil {
+		o.e.queueEvent(newEventWave(o, gcenter, -1, func(r *Object) {
+			delete(r.passedGravity, o)
+		}))
 	}
 }
 
-// tick will tick the object itself and it's attachments concurrently
-// it will call wg.Done when exit
-func (o *Object) tick(wg *sync.WaitGroup, dt float64, e *Engine) {
-	defer wg.Done()
-
-	o.mux.RLock()
-	for a := range o.attachs {
-		wg.Add(1)
-		go a.tick(wg, dt, e)
-	}
-	o.mux.RUnlock()
-
-	if o.anchor != nil { // only tick on non-main anchor
-		o.mux.Lock()
-		defer o.mux.Unlock()
-		o._tick(dt)
-	}
+func (o *Object) saveStatus() {
+	o.lastStatus.from(&o.objStatus)
 }

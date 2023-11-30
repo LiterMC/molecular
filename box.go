@@ -44,6 +44,10 @@ func (b *Cube) EndPos() Vec3 {
 	return b.P.Added(b.S)
 }
 
+func (b *Cube) Center() Vec3 {
+	return b.P.Added(b.S.ScaledN(0.5))
+}
+
 // Overlap will return if the two Cube overlapped or not
 func (b *Cube) Overlap(x *Cube) bool {
 	p1, p2 := b.Pos(), b.EndPos()
