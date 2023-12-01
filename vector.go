@@ -10,6 +10,9 @@ type Vec3 struct {
 }
 
 var (
+	UnitX     Vec3 = Vec3{1, 0, 0}
+	UnitY     Vec3 = Vec3{0, 1, 0}
+	UnitZ     Vec3 = Vec3{0, 0, 1}
 	ZeroVec   Vec3
 	OneVec    Vec3 = Vec3{1, 1, 1}
 	NegOneVec Vec3 = Vec3{-1, -1, -1}
@@ -233,24 +236,29 @@ func (v Vec3) AngleZ() float64 {
 // Rotate around x-axis
 func (v *Vec3) RotateX(angle float64) *Vec3 {
 	s, c := math.Sincos(angle)
-	v.Y = v.Y*c - v.Z*s
-	v.Z = v.Y*s + v.Z*c
+	v.Y, v.Z = v.Y*c-v.Z*s, v.Y*s+v.Z*c
 	return v
 }
 
 // Rotate around y-axis
 func (v *Vec3) RotateY(angle float64) *Vec3 {
 	s, c := math.Sincos(angle)
-	v.X = v.Y*s + v.Z*c
-	v.Z = v.Y*c - v.Z*s
+	v.X, v.Z = v.X*s+v.Z*c, v.X*c-v.Z*s
 	return v
 }
 
 // Rotate around z-axis
 func (v *Vec3) RotateZ(angle float64) *Vec3 {
 	s, c := math.Sincos(angle)
-	v.X = v.X*c - v.Y*s
-	v.Y = v.X*s + v.Y*c
+	v.X, v.Y = v.X*c-v.Y*s, v.X*s+v.Y*c
+	return v
+}
+
+// TODO: maybe we can do them once?
+func (v *Vec3) RotateXYZ(angles Vec3) *Vec3 {
+	v.RotateX(angles.X)
+	v.RotateY(angles.Y)
+	v.RotateZ(angles.Z)
 	return v
 }
 
@@ -268,9 +276,9 @@ func (v Vec3) RotatedX(angle float64) Vec3 {
 func (v Vec3) RotatedY(angle float64) Vec3 {
 	s, c := math.Sincos(angle)
 	return Vec3{
-		X: v.Y*s + v.Z*c,
+		X: v.X*s + v.Z*c,
 		Y: v.Y,
-		Z: v.Y*c - v.Z*s,
+		Z: v.X*c - v.Z*s,
 	}
 }
 
@@ -282,6 +290,12 @@ func (v Vec3) RotatedZ(angle float64) Vec3 {
 		Y: v.X*s + v.Y*c,
 		Z: v.Z,
 	}
+}
+
+func (v Vec3) RotatedXYZ(angles Vec3) Vec3 {
+	w := v
+	w.RotateXYZ(angles)
+	return w
 }
 
 type Vec4 struct {

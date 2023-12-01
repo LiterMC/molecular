@@ -36,7 +36,7 @@ type objStatus struct {
 	pos           Vec3 // the position relative to the anchor
 	tickForce     Vec3
 	velocity      Vec3
-	heading       Vec3 // X=pitch, Y=yaw, Z=roll
+	heading       Vec3 // X=pitch, Y=yaw, Z=roll; facing Z+
 	headVel       Vec3
 	passedGravity map[*Object]*gravityStatus
 }
@@ -162,7 +162,7 @@ func (o *Object) SetPos(pos Vec3) {
 	o.pos = pos
 }
 
-// Heading returns the heading vector
+// Heading returns the rotate vector
 // X == pitch
 // Y == yaw
 // Z == roll
@@ -240,9 +240,17 @@ func (o *Object) forEachAnchor(cb func(*Object)) {
 func (o *Object) AbsPos() (p Vec3) {
 	p = o.lastStatus.pos
 	o.forEachAnchor(func(a *Object) {
+		a.RotatedPos(p)
 		p.Add(a.lastStatus.pos)
 	})
 	return
+}
+
+func (o *Object) RotatedPos(p Vec3) Vec3 {
+	p.Sub(o.lastStatus.gcenter)
+	p.RotateXYZ(o.lastStatus.heading)
+	p.Add(o.lastStatus.gcenter)
+	return p
 }
 
 func (o *Object) Velocity() Vec3 {
