@@ -2,6 +2,7 @@ package molecular
 
 import (
 	"math"
+	"sync"
 )
 
 const (
@@ -10,15 +11,13 @@ const (
 
 type GravityField struct {
 	mass    float64
-	radius  float64
-	density float64
+	radius, rSq  float64
 }
 
-func NewGravityField(mass float64, radius float64, density float64) *GravityField {
+func NewGravityField(mass float64, radius float64) *GravityField {
 	return &GravityField{
-		mass:    mass,
-		radius:  radius,
-		density: density,
+		mass:     mass,
+		radius:   radius,
 	}
 }
 
@@ -36,30 +35,63 @@ func (f *GravityField) Radius() float64 {
 
 func (f *GravityField) SetRadius(radius float64) {
 	f.radius = radius
-}
-
-func (f *GravityField) Density() float64 {
-	return f.density
-}
-
-func (f *GravityField) SetDensity(density float64) {
-	f.density = density
+	f.rSq = radius * radius
 }
 
 // FieldAt returns the acceleration at the distance due to the gravity field
 func (f *GravityField) FieldAt(distance Vec3) Vec3 {
-	l := distance.Len()
-	if l == 0 {
+	lSq := distance.SqLen()
+	if lSq == 0 {
 		return ZeroVec
 	}
 	distance.Negate()
-	if l < f.radius {
-		distance.ScaleN(4 / 3 * G * f.density * math.Pi)
+	if lSq < f.rSq {
+		distance.ScaleN(G * f.mass / lSq)
 	} else {
+		l := math.Sqrt(lSq)
 		// normalize 1 / l and G * m / l ^ 2
-		distance.ScaleN(G * f.mass / (l * l * l))
+		distance.ScaleN(G * f.mass / (lSq * l))
 	}
 	return distance
+}
+
+type gravityStatus struct {
+	f   GravityField
+	pos Vec3
+
+	gone bool
+	c    int
+}
+
+var gravityStatusPool = sync.Pool{
+	New: func() any {
+		return new(gravityStatus)
+	},
+}
+
+func (s *gravityStatus) FieldAt(pos Vec3) Vec3 {
+	return s.f.FieldAt(pos.Subbed(s.pos))
+}
+
+func (s *gravityStatus) clone() (g *gravityStatus) {
+	g = gravityStatusPool.Get().(*gravityStatus)
+	*g = *s
+	g.c = 1
+	return
+}
+
+func (s *gravityStatus) count() {
+	s.c++
+}
+
+func (s *gravityStatus) release() {
+	s.c--
+	if s.c < 0 {
+		panic("gravityStatus.count become less than one")
+	}
+	if s.c == 0 {
+		gravityStatusPool.Put(s)
+	}
 }
 
 // MagnetField represents a simulated magnetic field.

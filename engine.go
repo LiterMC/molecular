@@ -6,11 +6,17 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	defaultMinAcc = 1e-3
+)
+
 type Config struct {
 	// MinSpeed means the minimum positive speed
 	MinSpeed float64
 	// MaxSpeed means the maximum positive speed
 	MaxSpeed float64
+	// MinAccel means the minimum positive acceleration
+	MinAccel float64
 }
 
 // Engine includes a sync.RWMutex which should be locked when operating global things inside a tick
@@ -18,7 +24,10 @@ type Engine struct {
 	sync.RWMutex
 
 	// the config should not change while engine running
-	cfg Config
+	cfg                    Config
+	minSpeedSq, maxSpeedSq float64
+	minAccelSq             float64
+
 	// the main anchor object must be invincible and unmovable
 	mainAnchor *Object
 	// objects save all the Object instance but not mainAnchor
@@ -33,6 +42,19 @@ func NewEngine(cfg Config) (e *Engine) {
 			id: uuid.Nil,
 		},
 		objects: make(map[uuid.UUID]*Object, 10),
+	}
+	e.maxSpeedSq = cfg.MaxSpeed * cfg.MaxSpeed
+	if e.maxSpeedSq <= 0 || e.maxSpeedSq > cSq {
+		e.maxSpeedSq = cSq
+	}
+	e.minSpeedSq = cfg.MinSpeed * cfg.MinSpeed
+	if cfg.MinAccel > 0 {
+		e.minAccelSq = cfg.MinAccel * cfg.MinAccel
+	} else if cfg.MinAccel == 0 {
+		e.cfg.MinAccel = defaultMinAcc
+		e.minAccelSq = defaultMinAcc * defaultMinAcc
+	} else {
+		e.minAccelSq = cfg.MinAccel
 	}
 	return
 }
@@ -74,6 +96,10 @@ func (e *Engine) GetObject(id uuid.UUID) *Object {
 	return e.objects[id]
 }
 
+func (e *Engine) Events() []eventWave {
+	return e.events
+}
+
 func (e *Engine) queueEvent(event eventWave) {
 	e.Lock()
 	defer e.Unlock()
@@ -83,25 +109,24 @@ func (e *Engine) queueEvent(event eventWave) {
 // Tick will call tick on the main anchor
 func (e *Engine) Tick(dt float64) {
 	e.Lock()
-	defer e.Unlock()
-
 	e.events = append(e.events, e.queued...)
 	e.queued = e.queued[:0]
 	e.Unlock()
 
 	var wg sync.WaitGroup
 	// tick objects
-	e.RLock()
 	e.tickLocked(&wg, dt)
-	e.RUnlock()
 	wg.Wait()
-	e.Lock()
+
 	// save object status
 	e.saveStatusLocked(&wg)
 	wg.Wait()
 }
 
 func (e *Engine) tickLocked(wg *sync.WaitGroup, dt float64) {
+	e.RLock()
+	defer e.RUnlock()
+
 	wg.Add(len(e.objects))
 	for _, o := range e.objects {
 		go func(o *Object) {
@@ -109,16 +134,22 @@ func (e *Engine) tickLocked(wg *sync.WaitGroup, dt float64) {
 			o.tick(dt)
 		}(o)
 	}
-	// wg.Add(len(e.events))
 	for _, event := range e.events {
-		// go func() {
-		// 	defer wg.Done()
+		if event.Heavy() {
+			go func(event eventWave) {
+				defer wg.Done()
+				event.Tick(dt, e)
+			}(event)
+		}else{
 			event.Tick(dt, e)
-		// }()
+		}
 	}
 }
 
 func (e *Engine) saveStatusLocked(wg *sync.WaitGroup) {
+	e.Lock()
+	defer e.Unlock()
+
 	wg.Add(len(e.objects))
 	for _, o := range e.objects {
 		go func(o *Object) {
@@ -127,7 +158,9 @@ func (e *Engine) saveStatusLocked(wg *sync.WaitGroup) {
 		}(o)
 	}
 	for i := 0; i < len(e.events); {
-		if e.events[i].AliveTime() == 0 {
+		event := e.events[i]
+		if event.AliveTime() == 0 {
+			event.OnRemoved()
 			e.events[i] = e.events[len(e.events)-1]
 			e.events = e.events[:len(e.events)-1]
 		} else {

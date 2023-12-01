@@ -5,7 +5,8 @@ import (
 )
 
 const (
-	C = 299792458.0 // The speed of light
+	C   = 299792458.0 // The speed of light
+	cSq = C * C
 )
 
 // See <https://en.wikipedia.org/wiki/Lorentz_factor>
@@ -17,11 +18,18 @@ func (e *Engine) LorentzFactor(speed float64) float64 {
 // It's used for faster calculate in some specific cases
 // See <https://en.wikipedia.org/wiki/Lorentz_factor>
 func (e *Engine) ReLorentzFactor(speed float64) float64 {
-	if speed == 0 {
+	return e.ReLorentzFactorSq(speed * speed)
+}
+
+// ReLorentzFactorSq is same as ReLorentzFactor, but require squared speed as input
+func (e *Engine) ReLorentzFactorSq(speedSq float64) float64 {
+	if speedSq == 0 {
 		return 1
 	}
-	n := speed / C
-	return math.Sqrt(1 - n*n)
+	if speedSq > e.maxSpeedSq {
+		speedSq = e.maxSpeedSq
+	}
+	return math.Sqrt(1 - speedSq/cSq)
 }
 
 // Note: F = dP / dt

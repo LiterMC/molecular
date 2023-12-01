@@ -2,6 +2,8 @@ package molecular
 
 import (
 	"fmt"
+	"math"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -35,12 +37,12 @@ type objStatus struct {
 	pos              Vec3 // the position relative to the anchor
 	tickForce        Vec3
 	velocity         Vec3
-	passedGravity    map[*Object]Vec3
+	passedGravity    map[*Object]*gravityStatus
 }
 
 func makeObjStatus() objStatus {
 	return objStatus{
-		passedGravity: make(map[*Object]Vec3, 5),
+		passedGravity: make(map[*Object]*gravityStatus, 5),
 	}
 }
 
@@ -53,9 +55,22 @@ func (s *objStatus) from(a *objStatus) {
 	s.pos = a.pos
 	s.tickForce = a.tickForce
 	s.velocity = a.velocity
-	clear(s.passedGravity)
 	for k, v := range a.passedGravity {
-		s.passedGravity[k] = v
+		g := s.passedGravity[k]
+		if g != nil {
+			*g = *v
+			g.c = 1
+		} else {
+			s.passedGravity[k] = v.clone()
+		}
+	}
+	for k, g := range s.passedGravity {
+		if g.gone {
+			g.release()
+			delete(s.passedGravity, k)
+		} else {
+			g.gone = true
+		}
 	}
 	if a.gfield != nil {
 		if s.gfield == nil {
@@ -73,21 +88,23 @@ func (s *objStatus) clone() (a objStatus) {
 		a.gfield = new(GravityField)
 		*a.gfield = *s.gfield
 	}
-	a.passedGravity = make(map[*Object]Vec3, len(s.passedGravity))
+	a.passedGravity = make(map[*Object]*gravityStatus, len(s.passedGravity))
 	for k, v := range s.passedGravity {
-		a.passedGravity[k] = v
+		a.passedGravity[k] = v.clone()
 	}
 	return
 }
 
 // Object represents an object in the physics engine.
 type Object struct {
+	sync.RWMutex
 	e      *Engine
 	id     uuid.UUID // a v7 UUID
 	typ    ObjType
 	blocks []Block
 	objStatus
 
+	// lastStatus should only be read during a tick
 	lastStatus objStatus
 }
 
@@ -162,19 +179,22 @@ func (o *Object) AttachTo(anchor *Object) {
 	}
 
 	var (
-		p = o.lastStatus.pos
-		v = o.lastStatus.velocity
+		p  = o.lastStatus.pos
+		v  = o.lastStatus.velocity
+		v2 = anchor.lastStatus.velocity
 	)
 	p.Sub(anchor.lastStatus.pos)
-	v.Sub(anchor.lastStatus.velocity)
 	o.forEachAnchor(func(a *Object) {
 		p.Add(a.lastStatus.pos)
+		v.ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen()))
 		v.Add(a.lastStatus.velocity)
 	})
 	anchor.forEachAnchor(func(a *Object) {
 		p.Sub(a.lastStatus.pos)
-		v.Sub(a.lastStatus.velocity)
+		v2.ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen()))
+		v2.Add(a.lastStatus.velocity)
 	})
+	v.Sub(v2)
 	o.anchor = anchor
 	o.pos = p
 	o.velocity = v
@@ -209,6 +229,7 @@ func (o *Object) SetVelocity(velocity Vec3) {
 func (o *Object) AbsVelocity() (v Vec3) {
 	v = o.lastStatus.velocity
 	o.forEachAnchor(func(a *Object) {
+		v.ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen()))
 		v.Add(a.lastStatus.velocity)
 	})
 	return
@@ -250,23 +271,32 @@ func (o *Object) SetGField(field *GravityField) {
 	o.gfield = field
 }
 
-func (o *Object) tick(dt float64) {
-	vel := o.velocity
-	vl := vel.Len()
-	if o.e.cfg.MaxSpeed > 0 {
-		if vl > o.e.cfg.MaxSpeed {
-			vl = o.e.cfg.MaxSpeed
-		}
-	} else if vl >= C {
-		vl = 0
+func (o *Object) reLorentzFactor() float64 {
+	if o.lastStatus.anchor == nil {
+		return 1
 	}
-	lf := o.e.LorentzFactor(vl)
-	pt := o.e.ProperTime(dt, vl)
+	return o.e.ReLorentzFactorSq(o.lastStatus.velocity.Len()) * o.lastStatus.anchor.reLorentzFactor()
+}
+
+func (o *Object) ProperTime(dt float64) float64 {
+	return dt / o.reLorentzFactor()
+}
+
+func (o *Object) tick(dt float64) {
+	o.Lock()
+	defer o.Unlock()
+
+	rlf := o.reLorentzFactor()
+	pt := dt * rlf
+	if pt <= 0 {
+		pt = math.SmallestNonzeroFloat64
+	}
 
 	// reset the state
 	o.tickForce = ZeroVec
 	o.gcenter = ZeroVec
 
+	// tick blocks
 	mass := 0.0
 	for i, b := range o.blocks {
 		b.Tick(pt, o)
@@ -280,70 +310,72 @@ func (o *Object) tick(dt float64) {
 			o.gcenter.Add(c.Subbed(o.gcenter).ScaledN(m / mass))
 		}
 	}
+	pos := o.AbsPos()
 	{ // apply the gravity
-		factor := lf * mass
+		factor := mass / rlf
 		var (
-			largestL float64
-			largestO *Object
+			smallestL float64
+			smallestO *Object
 		)
-		for a, f := range o.lastStatus.passedGravity {
-			f.ScaleN(factor)
-			if l := f.SqLen(); largestL < l {
-				largestL = l
-				largestO = a
+		v := o.AbsVelocity()
+		for a, g := range o.lastStatus.passedGravity {
+			l := v.Subbed(a.AbsVelocity()).SqLen()
+			if smallestL > l {
+				smallestL = l
+				smallestO = a
 			}
-			o.tickForce.Add(f)
+			f := g.FieldAt(pos)
+			if f.SqLen() >= o.e.minAccelSq {
+				f.ScaleN(factor)
+				o.tickForce.Add(f)
+			} else {
+				g.release()
+				delete(o.lastStatus.passedGravity, a)
+			}
 		}
-		if largestO != nil {
-			o.AttachTo(largestO)
+		if smallestO != nil {
+			o.AttachTo(smallestO)
 		}
 	}
 	if mass > 0 {
-		o.velocity.Add(o.e.AccFromForce(mass, vl, o.tickForce).ScaledN(dt))
+		o.velocity.Add(o.tickForce.ScaledN(pt / mass))
 	} else if mass < 0 {
 		mass = 0
 	}
 
-	// (vi + vf) / 2 * ∆t
-	vel.Add(o.velocity)
-	vel.ScaleN(dt / 2)
-	if vel.SqLen() > o.e.cfg.MinSpeed*o.e.cfg.MinSpeed {
-		o.pos.Add(vel)
+	moved := false
+	{ // calculate the new position
+		// d = (vi + vf) / 2 * ∆t
+		vel := o.lastStatus.velocity
+		vel.Add(o.velocity)
+		vel.ScaleN(dt / 2)
+		if vel.SqLen() > o.e.minSpeedSq {
+			o.pos.Add(vel)
+			moved = true
+		}
 	}
 
 	// queue gravity change event
 	gcenter := o.AbsPos()
 	gcenter.Add(o.gcenter)
-	if lastNil := o.lastStatus.gfield == nil; o.gfield != nil {
+	if o.gfield != nil {
+		lastNil := o.lastStatus.gfield == nil
 		if o.typ == ManMadeObj {
 			if lastNil || mass != o.gfield.Mass() {
 				o.gfield.SetMass(mass)
-				var cb func(r *Object)
-				if mass == 0 {
-					cb = func(r *Object) {
-						delete(r.passedGravity, o)
-					}
-				}else{
-					g := *o.gfield
-					cb = func(r *Object) {
-						r.passedGravity[o] = g.FieldAt(r.AbsPos().Subbed(gcenter))
-					}
+				if mass > 0 {
+					o.e.queueEvent(o.e.newGravityWave(o, gcenter, o.gfield))
 				}
-				o.e.queueEvent(newEventWave(o, gcenter, -1, cb))
 			}
-		}else if lastNil {
-			g := *o.gfield
-			o.e.queueEvent(newEventWave(o, gcenter, -1, func(r *Object) {
-				r.passedGravity[o] = g.FieldAt(r.AbsPos().Subbed(gcenter))
-			}))
+		} else if lastNil || moved {
+			o.e.queueEvent(o.e.newGravityWave(o, gcenter, o.gfield))
 		}
-	}else if !lastNil {
-		o.e.queueEvent(newEventWave(o, gcenter, -1, func(r *Object) {
-			delete(r.passedGravity, o)
-		}))
 	}
 }
 
 func (o *Object) saveStatus() {
+	o.RLock()
+	defer o.RUnlock()
+
 	o.lastStatus.from(&o.objStatus)
 }
