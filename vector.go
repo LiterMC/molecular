@@ -148,6 +148,36 @@ func (v Vec3) ScaledN(n float64) Vec3 {
 	}
 }
 
+func (v *Vec3) Mod(u Vec3) *Vec3 {
+	v.X = math.Mod(v.X, u.X)
+	v.Y = math.Mod(v.Y, u.Y)
+	v.Z = math.Mod(v.Z, u.Z)
+	return v
+}
+
+func (v Vec3) Moded(u Vec3) Vec3 {
+	return Vec3{
+		X: math.Mod(v.X, u.X),
+		Y: math.Mod(v.Y, u.Y),
+		Z: math.Mod(v.Z, u.Z),
+	}
+}
+
+func (v *Vec3) ModN(n float64) *Vec3 {
+	v.X = math.Mod(v.X, n)
+	v.Y = math.Mod(v.Y, n)
+	v.Z = math.Mod(v.Z, n)
+	return v
+}
+
+func (v Vec3) ModedN(n float64) Vec3 {
+	return Vec3{
+		X: math.Mod(v.X, n),
+		Y: math.Mod(v.Y, n),
+		Z: math.Mod(v.Z, n),
+	}
+}
+
 // Normalize make the length of the vector to 1 and keep the current direction.
 func (v *Vec3) Normalize() *Vec3 {
 	if v.IsZero() {
