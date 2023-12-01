@@ -30,14 +30,15 @@ func (t ObjType) String() string {
 }
 
 type objStatus struct {
-	anchor           *Object
-	gcenter          Vec3 // the gravity center
-	gfield           *GravityField
-	pitch, yaw, roll float64
-	pos              Vec3 // the position relative to the anchor
-	tickForce        Vec3
-	velocity         Vec3
-	passedGravity    map[*Object]*gravityStatus
+	anchor        *Object
+	gcenter       Vec3 // the gravity center
+	gfield        *GravityField
+	pos           Vec3 // the position relative to the anchor
+	tickForce     Vec3
+	velocity      Vec3
+	heading       Vec3 // X=pitch, Y=yaw, Z=roll
+	headVel       Vec3
+	passedGravity map[*Object]*gravityStatus
 }
 
 func makeObjStatus() objStatus {
@@ -49,9 +50,7 @@ func makeObjStatus() objStatus {
 func (s *objStatus) from(a *objStatus) {
 	s.anchor = a.anchor
 	s.gcenter = a.gcenter
-	s.pitch = a.pitch
-	s.yaw = a.yaw
-	s.roll = a.roll
+	s.heading = a.heading
 	s.pos = a.pos
 	s.tickForce = a.tickForce
 	s.velocity = a.velocity
@@ -134,7 +133,7 @@ func (o *Object) String() string {
 	pos=%v,
 	facing=(pitch=%v, yaw=%v, roll=%v),
 	type=%s,
-}`, o.id, o.anchor.id, o.pos, o.pitch, o.yaw, o.roll, o.typ)
+}`, o.id, o.anchor.id, o.pos, o.heading.X, o.heading.Y, o.heading.Z, o.typ)
 }
 
 // An object's id will never be changed
@@ -161,6 +160,34 @@ func (o *Object) Pos() Vec3 {
 // SetPos sets the position relative to the anchor
 func (o *Object) SetPos(pos Vec3) {
 	o.pos = pos
+}
+
+// Heading returns the heading vector
+// X == pitch
+// Y == yaw
+// Z == roll
+func (o *Object) Heading() Vec3 {
+	return o.heading
+}
+
+// SetHeading sets the heading angles
+func (o *Object) SetHeading(heading Vec3) {
+	o.heading = heading
+}
+
+// HeadingPYR returns pitch, yaw, and roll
+func (o *Object) HeadingPYR() (pitch, yaw, roll float64) {
+	return o.heading.XYZ()
+}
+
+// HeadingVel returns the heading velocity vector
+func (o *Object) HeadingVel() Vec3 {
+	return o.headVel
+}
+
+// SetHeadingVel sets the heading velocity vector
+func (o *Object) SetHeadingVel(v Vec3) {
+	o.headVel = v
 }
 
 // AttachTo will change the object's anchor to another.
@@ -287,6 +314,7 @@ func (o *Object) tick(dt float64) {
 	defer o.Unlock()
 
 	rlf := o.reLorentzFactor()
+	apt := o.anchor.ProperTime(dt)
 	pt := dt * rlf
 	if pt <= 0 {
 		pt = math.SmallestNonzeroFloat64
@@ -344,15 +372,19 @@ func (o *Object) tick(dt float64) {
 	}
 
 	moved := false
-	{ // calculate the new position
+	{ // calculate the new position and angle
 		// d = (vi + vf) / 2 * ∆t
 		vel := o.lastStatus.velocity
 		vel.Add(o.velocity)
-		vel.ScaleN(dt / 2)
+		vel.ScaleN(apt / 2)
 		if vel.SqLen() > o.e.minSpeedSq {
 			o.pos.Add(vel)
 			moved = true
 		}
+		av := o.lastStatus.headVel
+		av.Add(o.headVel)
+		av.ScaleN(apt / 2)
+		o.heading.Add(av).ModN(math.Pi)
 	}
 
 	// queue gravity change event

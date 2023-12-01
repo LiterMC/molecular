@@ -140,7 +140,7 @@ func (e *Engine) tickLocked(wg *sync.WaitGroup, dt float64) {
 				defer wg.Done()
 				event.Tick(dt, e)
 			}(event)
-		}else{
+		} else {
 			event.Tick(dt, e)
 		}
 	}

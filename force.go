@@ -10,14 +10,15 @@ const (
 )
 
 type GravityField struct {
-	mass    float64
-	radius, rSq  float64
+	mass        float64
+	radius, rSq float64
 }
 
 func NewGravityField(mass float64, radius float64) *GravityField {
 	return &GravityField{
-		mass:     mass,
-		radius:   radius,
+		mass:   mass,
+		radius: radius,
+		rSq:    radius * radius,
 	}
 }
 
