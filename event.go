@@ -33,9 +33,12 @@ type eventWaveFn struct {
 	radius, maxRadius        float64
 	heavy                    bool
 	on                       func(receiver *Object)
+	onBeforeTick             func(*eventWaveFn) bool
 	onRemove                 func()
 	triggered, lastTriggered set[*Object]
 	objsCache                []*Object
+	delay, tick              int
+	skipped                  float64
 }
 
 var _ eventWave = (*eventWaveFn)(nil)
@@ -84,10 +87,21 @@ func (f *eventWaveFn) Heavy() bool {
 }
 
 func (f *eventWaveFn) Tick(dt float64, e *Engine) {
-	f.alive -= dt
-	if f.alive < 0 {
+	if f.delay > 0 {
+		f.skipped += dt
+		if f.tick++; f.tick < f.delay {
+			return
+		}
+		dt = f.skipped
+		f.skipped = 0
+		f.tick = 0
+	}
+	if f.alive -= dt; f.alive < 0 {
 		dt += f.alive
 		f.alive = 0
+	}
+	if f.onBeforeTick != nil && f.onBeforeTick(f) {
+		return
 	}
 	lastr := f.radius
 	f.radius += f.speed * dt
@@ -105,6 +119,7 @@ func (f *eventWaveFn) Tick(dt float64, e *Engine) {
 		f.triggered.Put(o)
 		f.on(o)
 	}
+	f.objsCache = f.objsCache[:0]
 }
 
 func (f *eventWaveFn) OnRemoved() {
@@ -113,10 +128,30 @@ func (f *eventWaveFn) OnRemoved() {
 		f.onRemove()
 		f.onRemove = nil
 	}
+	if f.onBeforeTick != nil {
+		f.onBeforeTick = nil
+	}
 	eventWaveFnPool.Put(f)
 }
 
-func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField) eventWave {
+const (
+	maxR0 = (float64)(int(1) << (iota * 2)) * (C / 100.)
+	maxR1
+	maxR2
+	maxR3
+	maxR4
+	maxR5
+	maxR6
+	maxR7
+	maxR8
+)
+
+var maxRs = [...]float64{maxR0, maxR1, maxR2, maxR3, maxR4, maxR5, maxR6, maxR7}
+
+// How does gravity wave works:
+// - r < C: instant gravity
+// - else: update gravity per 128 ticks
+func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, tick uint16) eventWave {
 	g := gravityStatusPool.Get().(*gravityStatus)
 	g.f = *f
 	g.pos = center
@@ -125,6 +160,16 @@ func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField) ev
 	maxRadius := -1.0
 	if e.cfg.MinAccel > 0 {
 		maxRadius = math.Sqrt(G / e.cfg.MinAccel * f.Mass())
+	}
+
+	life := 0
+	for i := (uint16)(2); i != 0 && tick&(i-1) == 0; i <<= 2 {
+		life++
+	}
+	if life < len(maxRs) {
+		if maxr := maxRs[life]; maxr < maxRadius {
+			maxRadius = maxr
+		}
 	}
 
 	w := newEventWave(sender, center, maxRadius, func(r *Object) {
@@ -138,5 +183,46 @@ func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField) ev
 		r.passedGravity[sender] = g
 	}, false)
 	w.onRemove = g.release
+	w.onBeforeTick = func(e *eventWaveFn) bool {
+		switch {
+		case e.radius > maxR8:
+			if e.delay != 1 << (8 * 2) {
+				e.delay = 1 << (8 * 2)
+			}
+		case e.radius > maxR7:
+			if e.delay != 1 << (7 * 2) {
+				e.delay = 1 << (7 * 2)
+			}
+		case e.radius > maxR6:
+			if e.delay != 1 << (6 * 2) {
+				e.delay = 1 << (6 * 2)
+			}
+		case e.radius > maxR5:
+			if e.delay != 1 << (5 * 2) {
+				e.delay = 1 << (5 * 2)
+			}
+		case e.radius > maxR4:
+			if e.delay != 1 << (4 * 2) {
+				e.delay = 1 << (4 * 2)
+			}
+		case e.radius > maxR3:
+			if e.delay != 1 << (3 * 2) {
+				e.delay = 1 << (3 * 2)
+			}
+		case e.radius > maxR2:
+			if e.delay != 1 << (2 * 2) {
+				e.delay = 1 << (2 * 2)
+			}
+		case e.radius > maxR1:
+			if e.delay != 1 << (1 * 2) {
+				e.delay = 1 << (1 * 2)
+			}
+		case e.radius > maxR0:
+			if e.delay != 1 << (0 * 2) {
+				e.delay = 1 << (0 * 2)
+			}
+		}
+		return false
+	}
 	return w
 }

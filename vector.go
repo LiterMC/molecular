@@ -256,10 +256,10 @@ func (v *Vec3) RotateZ(angle float64) *Vec3 {
 
 // TODO: maybe we can do them once?
 func (v *Vec3) RotateXYZ(angles Vec3) *Vec3 {
-	v.RotateX(angles.X)
-	v.RotateY(angles.Y)
-	v.RotateZ(angles.Z)
-	return v
+	return v.
+		RotateX(angles.X).
+		RotateY(angles.Y).
+		RotateZ(angles.Z)
 }
 
 // Rotate around x-axis

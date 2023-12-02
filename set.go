@@ -28,3 +28,11 @@ func (s set[T]) AsSlice() (a []T) {
 	}
 	return
 }
+
+func (s set[T]) Clone() (o set[T]) {
+	o = make(set[T], len(s))
+	for a := range s {
+		o.Put(a)
+	}
+	return
+}

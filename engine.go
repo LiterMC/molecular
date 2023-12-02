@@ -31,8 +31,8 @@ type Engine struct {
 	// the main anchor object must be invincible and unmovable
 	mainAnchor *Object
 	// objects save all the Object instance but not mainAnchor
-	objects        map[uuid.UUID]*Object
-	events, queued []eventWave
+	objects map[uuid.UUID]*Object
+	events  []eventWave
 }
 
 func NewEngine(cfg Config) (e *Engine) {
@@ -68,14 +68,16 @@ func (e *Engine) MainAnchor() *Object {
 }
 
 // NewObject will create an object use v7 UUID
-func (e *Engine) NewObject(anchor *Object, pos Vec3) *Object {
+func (e *Engine) NewObject(typ ObjType, anchor *Object, pos Vec3) (o *Object) {
 	e.Lock()
 	defer e.Unlock()
 
 	stat := makeObjStatus()
 	stat.anchor = anchor
 	stat.pos = pos
-	return e.newObjectLocked(stat)
+	o = e.newObjectLocked(stat)
+	o.SetType(typ)
+	return
 }
 
 func (e *Engine) newObjectLocked(stat objStatus) *Object {
@@ -101,18 +103,17 @@ func (e *Engine) Events() []eventWave {
 }
 
 func (e *Engine) queueEvent(event eventWave) {
+	if event == nil {
+		return
+	}
+
 	e.Lock()
 	defer e.Unlock()
-	e.queued = append(e.queued, event)
+	e.events = append(e.events, event)
 }
 
 // Tick will call tick on the main anchor
 func (e *Engine) Tick(dt float64) {
-	e.Lock()
-	e.events = append(e.events, e.queued...)
-	e.queued = e.queued[:0]
-	e.Unlock()
-
 	var wg sync.WaitGroup
 	// tick objects
 	e.tickLocked(&wg, dt)

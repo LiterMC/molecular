@@ -105,6 +105,8 @@ type Object struct {
 
 	// lastStatus should only be read during a tick
 	lastStatus objStatus
+
+	gtick uint16
 }
 
 func (e *Engine) newAndPutObject(id uuid.UUID, stat objStatus) (o *Object) {
@@ -208,20 +210,36 @@ func (o *Object) AttachTo(anchor *Object) {
 	var (
 		p  = o.lastStatus.pos
 		v  = o.lastStatus.velocity
+		p2 = anchor.lastStatus.pos
 		v2 = anchor.lastStatus.velocity
 	)
-	p.Sub(anchor.lastStatus.pos)
 	o.forEachAnchor(func(a *Object) {
-		p.Add(a.lastStatus.pos)
-		v.ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen()))
-		v.Add(a.lastStatus.velocity)
+		a.
+			RotatePos(&p).
+			Add(a.lastStatus.pos)
+		v.
+			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
+			RotateXYZ(a.lastStatus.heading).
+			Add(a.lastStatus.velocity)
 	})
 	anchor.forEachAnchor(func(a *Object) {
-		p.Sub(a.lastStatus.pos)
-		v2.ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen()))
-		v2.Add(a.lastStatus.velocity)
+		a.
+			RotatePos(&p2).
+			Add(a.lastStatus.pos)
+		v2.
+			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
+			RotateXYZ(a.lastStatus.heading).
+			Add(a.lastStatus.velocity)
 	})
-	v.Sub(v2)
+	hneg := o.lastStatus.heading.Negated()
+	p.
+		Sub(p2).
+		Sub(o.lastStatus.gcenter).
+		RotateXYZ(hneg).
+		Add(o.lastStatus.gcenter)
+	v.
+		Sub(v2).
+		RotateXYZ(hneg)
 	o.anchor = anchor
 	o.pos = p
 	o.velocity = v
@@ -240,16 +258,20 @@ func (o *Object) forEachAnchor(cb func(*Object)) {
 func (o *Object) AbsPos() (p Vec3) {
 	p = o.lastStatus.pos
 	o.forEachAnchor(func(a *Object) {
-		a.RotatedPos(p)
-		p.Add(a.lastStatus.pos)
+		a.
+			RotatePos(&p).
+			Add(a.lastStatus.pos)
 	})
 	return
 }
 
-func (o *Object) RotatedPos(p Vec3) Vec3 {
-	p.Sub(o.lastStatus.gcenter)
-	p.RotateXYZ(o.lastStatus.heading)
-	p.Add(o.lastStatus.gcenter)
+func (o *Object) RotatePos(p *Vec3) *Vec3 {
+	if o.anchor != nil {
+		p.
+			Sub(o.lastStatus.gcenter).
+			RotateXYZ(o.lastStatus.heading).
+			Add(o.lastStatus.gcenter)
+	}
 	return p
 }
 
@@ -264,8 +286,10 @@ func (o *Object) SetVelocity(velocity Vec3) {
 func (o *Object) AbsVelocity() (v Vec3) {
 	v = o.lastStatus.velocity
 	o.forEachAnchor(func(a *Object) {
-		v.ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen()))
-		v.Add(a.lastStatus.velocity)
+		v.
+			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
+			RotateXYZ(a.lastStatus.heading).
+			Add(a.lastStatus.velocity)
 	})
 	return
 }
@@ -400,15 +424,20 @@ func (o *Object) tick(dt float64) {
 	gcenter.Add(o.gcenter)
 	if o.gfield != nil {
 		lastNil := o.lastStatus.gfield == nil
+		if lastNil {
+			o.gtick = 0
+		} else {
+			o.gtick++
+		}
 		if o.typ == ManMadeObj {
 			if lastNil || mass != o.gfield.Mass() {
 				o.gfield.SetMass(mass)
 				if mass > 0 {
-					o.e.queueEvent(o.e.newGravityWave(o, gcenter, o.gfield))
+					o.e.queueEvent(o.e.newGravityWave(o, gcenter, o.gfield, o.gtick))
 				}
 			}
 		} else if lastNil || moved {
-			o.e.queueEvent(o.e.newGravityWave(o, gcenter, o.gfield))
+			o.e.queueEvent(o.e.newGravityWave(o, gcenter, o.gfield, o.gtick))
 		}
 	}
 }

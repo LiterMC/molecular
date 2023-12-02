@@ -28,12 +28,12 @@ func randVec3() Vec3 {
 }
 
 func TestVectorRotateXYZ(t *testing.T) {
-	t.Logf("%v", UnitX.RotatedY(90. / 180. * math.Pi))
-	t.Logf("%v", UnitX.RotatedZ(90. / 180. * math.Pi))
-	t.Logf("%v", UnitY.RotatedX(90. / 180. * math.Pi))
-	t.Logf("%v", UnitY.RotatedZ(-90. / 180. * math.Pi))
-	t.Logf("%v", UnitZ.RotatedX(-90. / 180. * math.Pi))
-	t.Logf("%v", UnitZ.RotatedY(-90. / 180. * math.Pi))
+	t.Logf("%v", UnitX.RotatedY(90./180.*math.Pi))
+	t.Logf("%v", UnitX.RotatedZ(90./180.*math.Pi))
+	t.Logf("%v", UnitY.RotatedX(90./180.*math.Pi))
+	t.Logf("%v", UnitY.RotatedZ(-90./180.*math.Pi))
+	t.Logf("%v", UnitZ.RotatedX(-90./180.*math.Pi))
+	t.Logf("%v", UnitZ.RotatedY(-90./180.*math.Pi))
 
 	pos := make([]Vec3, 16)
 	for i, _ := range pos {
