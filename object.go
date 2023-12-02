@@ -177,11 +177,6 @@ func (o *Object) SetHeading(heading Vec3) {
 	o.heading = heading
 }
 
-// HeadingPYR returns pitch, yaw, and roll
-func (o *Object) HeadingPYR() (pitch, yaw, roll float64) {
-	return o.heading.XYZ()
-}
-
 // HeadingVel returns the heading velocity vector
 func (o *Object) HeadingVel() Vec3 {
 	return o.headVel
@@ -210,36 +205,23 @@ func (o *Object) AttachTo(anchor *Object) {
 	var (
 		p  = o.lastStatus.pos
 		v  = o.lastStatus.velocity
-		p2 = anchor.lastStatus.pos
 		v2 = anchor.lastStatus.velocity
 	)
+	p.Sub(anchor.lastStatus.pos)
 	o.forEachAnchor(func(a *Object) {
-		a.
-			RotatePos(&p).
-			Add(a.lastStatus.pos)
+		p.Add(a.lastStatus.pos)
 		v.
 			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
-			RotateXYZ(a.lastStatus.heading).
 			Add(a.lastStatus.velocity)
 	})
 	anchor.forEachAnchor(func(a *Object) {
-		a.
-			RotatePos(&p2).
-			Add(a.lastStatus.pos)
+		p.Sub(a.lastStatus.pos)
 		v2.
 			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
-			RotateXYZ(a.lastStatus.heading).
 			Add(a.lastStatus.velocity)
 	})
 	hneg := o.lastStatus.heading.Negated()
-	p.
-		Sub(p2).
-		Sub(o.lastStatus.gcenter).
-		RotateXYZ(hneg).
-		Add(o.lastStatus.gcenter)
-	v.
-		Sub(v2).
-		RotateXYZ(hneg)
+	v.Sub(v2)
 	o.anchor = anchor
 	o.pos = p
 	o.velocity = v
@@ -258,9 +240,7 @@ func (o *Object) forEachAnchor(cb func(*Object)) {
 func (o *Object) AbsPos() (p Vec3) {
 	p = o.lastStatus.pos
 	o.forEachAnchor(func(a *Object) {
-		a.
-			RotatePos(&p).
-			Add(a.lastStatus.pos)
+		p.Add(a.lastStatus.pos)
 	})
 	return
 }
@@ -288,7 +268,6 @@ func (o *Object) AbsVelocity() (v Vec3) {
 	o.forEachAnchor(func(a *Object) {
 		v.
 			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
-			RotateXYZ(a.lastStatus.heading).
 			Add(a.lastStatus.velocity)
 	})
 	return
