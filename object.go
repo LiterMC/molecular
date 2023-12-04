@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 )
@@ -57,8 +58,10 @@ func (s *objStatus) from(a *objStatus) {
 	for k, v := range a.passedGravity {
 		g := s.passedGravity[k]
 		if g != nil {
-			*g = *v
-			g.c = 1
+			g.f = v.f
+			g.pos = v.pos
+			g.gone = false
+			g.c.Store(1)
 		} else {
 			s.passedGravity[k] = v.clone()
 		}
@@ -97,13 +100,14 @@ func (s *objStatus) clone() (a objStatus) {
 // Object represents an object in the physics engine.
 type Object struct {
 	sync.RWMutex
+	ready  atomic.Bool
 	e      *Engine
 	id     uuid.UUID // a v7 UUID
 	typ    ObjType
 	blocks []Block
 	objStatus
 
-	// lastStatus should only be read during a tick
+	lastMux    sync.RWMutex
 	lastStatus objStatus
 
 	gtick uint16
@@ -146,6 +150,16 @@ func (o *Object) Id() uuid.UUID {
 // Engine returns the engine of the object
 func (o *Object) Engine() *Engine {
 	return o.e
+}
+
+// IsReady returns true when the object is ready to tick
+func (o *Object) IsReady() bool {
+	return o.ready.Load()
+}
+
+// Ready makes the IsReady returns true
+func (o *Object) Ready() {
+	o.ready.Store(true)
 }
 
 // Anchor returns this object's anchor object
@@ -191,6 +205,9 @@ func (o *Object) SetHeadingVel(v Vec3) {
 // The new position will be calculated at the same time.
 // AttachTo must be called inside the object's tick
 func (o *Object) AttachTo(anchor *Object) {
+	o.lastMux.RLock()
+	defer o.lastMux.RUnlock()
+
 	if anchor == nil {
 		panic("molecular.Object: new anchor cannot be nil")
 	}
@@ -220,7 +237,6 @@ func (o *Object) AttachTo(anchor *Object) {
 			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
 			Add(a.lastStatus.velocity)
 	})
-	hneg := o.lastStatus.heading.Negated()
 	v.Sub(v2)
 	o.anchor = anchor
 	o.pos = p
@@ -232,12 +248,20 @@ func (o *Object) forEachAnchor(cb func(*Object)) {
 	if o.lastStatus.anchor == nil {
 		return
 	}
-	cb(o.lastStatus.anchor)
-	o.lastStatus.anchor.forEachAnchor(cb)
+	a := o.lastStatus.anchor
+
+	a.lastMux.RLock()
+	defer a.lastMux.RUnlock()
+
+	cb(a)
+	a.forEachAnchor(cb)
 }
 
 // AbsPos returns the position relative to the main anchor
 func (o *Object) AbsPos() (p Vec3) {
+	o.lastMux.RLock()
+	defer o.lastMux.RUnlock()
+
 	p = o.lastStatus.pos
 	o.forEachAnchor(func(a *Object) {
 		p.Add(a.lastStatus.pos)
@@ -246,6 +270,9 @@ func (o *Object) AbsPos() (p Vec3) {
 }
 
 func (o *Object) RotatePos(p *Vec3) *Vec3 {
+	o.lastMux.RLock()
+	defer o.lastMux.RUnlock()
+
 	if o.anchor != nil {
 		p.
 			Sub(o.lastStatus.gcenter).
@@ -264,6 +291,9 @@ func (o *Object) SetVelocity(velocity Vec3) {
 }
 
 func (o *Object) AbsVelocity() (v Vec3) {
+	o.lastMux.RLock()
+	defer o.lastMux.RUnlock()
+
 	v = o.lastStatus.velocity
 	o.forEachAnchor(func(a *Object) {
 		v.
@@ -424,6 +454,8 @@ func (o *Object) tick(dt float64) {
 func (o *Object) saveStatus() {
 	o.RLock()
 	defer o.RUnlock()
+	o.lastMux.Lock()
+	defer o.lastMux.Unlock()
 
 	o.lastStatus.from(&o.objStatus)
 }

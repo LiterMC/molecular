@@ -156,7 +156,7 @@ func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, ti
 	g.f = *f
 	g.pos = center
 	g.gone = false
-	g.c = 1
+	g.c.Store(1)
 	maxRadius := -1.0
 	if e.cfg.MinAccel > 0 {
 		maxRadius = math.Sqrt(G / e.cfg.MinAccel * f.Mass())
@@ -181,7 +181,7 @@ func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, ti
 		}
 		g.count()
 		r.passedGravity[sender] = g
-	}, false)
+	}, true)
 	w.onRemove = g.release
 	w.onBeforeTick = func(e *eventWaveFn) bool {
 		switch {

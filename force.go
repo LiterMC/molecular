@@ -3,6 +3,7 @@ package molecular
 import (
 	"math"
 	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -61,7 +62,7 @@ type gravityStatus struct {
 	pos Vec3
 
 	gone bool
-	c    int
+	c    atomic.Int32
 }
 
 var gravityStatusPool = sync.Pool{
@@ -76,21 +77,23 @@ func (s *gravityStatus) FieldAt(pos Vec3) Vec3 {
 
 func (s *gravityStatus) clone() (g *gravityStatus) {
 	g = gravityStatusPool.Get().(*gravityStatus)
-	*g = *s
-	g.c = 1
+	g.f = s.f
+	g.pos = s.pos
+	g.gone = false
+	g.c.Store(1)
 	return
 }
 
 func (s *gravityStatus) count() {
-	s.c++
+	s.c.Add(1)
 }
 
 func (s *gravityStatus) release() {
-	s.c--
-	if s.c < 0 {
+	c := s.c.Add(-1)
+	if c < 0 {
 		panic("gravityStatus.count become less than one")
 	}
-	if s.c == 0 {
+	if c == 0 {
 		gravityStatusPool.Put(s)
 	}
 }

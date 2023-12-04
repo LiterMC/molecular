@@ -98,6 +98,15 @@ func (e *Engine) GetObject(id uuid.UUID) *Object {
 	return e.objects[id]
 }
 
+func (e *Engine) ForeachObject(cb func(o *Object)) {
+	e.RLock()
+	defer e.RUnlock()
+
+	for _, o := range e.objects {
+		cb(o)
+	}
+}
+
 func (e *Engine) Events() []eventWave {
 	return e.events
 }
@@ -128,15 +137,18 @@ func (e *Engine) tickLocked(wg *sync.WaitGroup, dt float64) {
 	e.RLock()
 	defer e.RUnlock()
 
-	wg.Add(len(e.objects))
 	for _, o := range e.objects {
-		go func(o *Object) {
-			defer wg.Done()
-			o.tick(dt)
-		}(o)
+		if o.IsReady() {
+			wg.Add(1)
+			go func(o *Object) {
+				defer wg.Done()
+				o.tick(dt)
+			}(o)
+		}
 	}
 	for _, event := range e.events {
 		if event.Heavy() {
+			wg.Add(1)
 			go func(event eventWave) {
 				defer wg.Done()
 				event.Tick(dt, e)
@@ -151,12 +163,14 @@ func (e *Engine) saveStatusLocked(wg *sync.WaitGroup) {
 	e.Lock()
 	defer e.Unlock()
 
-	wg.Add(len(e.objects))
 	for _, o := range e.objects {
-		go func(o *Object) {
-			defer wg.Done()
-			o.saveStatus()
-		}(o)
+		if o.IsReady() {
+			wg.Add(1)
+			go func(o *Object) {
+				defer wg.Done()
+				o.saveStatus()
+			}(o)
+		}
 	}
 	for i := 0; i < len(e.events); {
 		event := e.events[i]

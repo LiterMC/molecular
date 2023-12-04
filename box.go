@@ -24,6 +24,15 @@ func NewCube(pos, size Vec3) (b *Cube) {
 	}
 }
 
+func NewCubeFromCenter(size Vec3) (b *Cube) {
+	pos := size
+	pos.ScaleN(-0.5)
+	return &Cube{
+		P: pos,
+		S: size,
+	}
+}
+
 func (b *Cube) String() string {
 	return "Cube(pos=" + b.P.String() + ", size=" + b.S.String() + ")"
 }
