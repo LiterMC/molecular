@@ -32,6 +32,8 @@ func (t ObjType) String() string {
 
 type objStatus struct {
 	anchor        *Object
+	children      []*Object
+	blocks        []Block // TODO: sort or index blocks
 	gcenter       Vec3 // the gravity center
 	gfield        *GravityField
 	pos           Vec3 // the position relative to the anchor
@@ -50,6 +52,8 @@ func makeObjStatus() objStatus {
 
 func (s *objStatus) from(a *objStatus) {
 	s.anchor = a.anchor
+	s.children = append(s.children[:0], a.children...)
+	s.blocks = append(s.blocks[:0], a.blocks...)
 	s.gcenter = a.gcenter
 	s.heading = a.heading
 	s.pos = a.pos
@@ -104,11 +108,10 @@ type Object struct {
 	e      *Engine
 	id     uuid.UUID // a v7 UUID
 	typ    ObjType
-	blocks []Block // TODO: sort or index blocks
 	objStatus
 
-	lastMux    sync.RWMutex
-	lastStatus objStatus
+	nextMux    sync.RWMutex
+	nextStatus objStatus
 
 	gtick uint16
 }
@@ -121,7 +124,7 @@ func (e *Engine) newAndPutObject(id uuid.UUID, stat objStatus) (o *Object) {
 		e:          e,
 		id:         id,
 		objStatus:  stat,
-		lastStatus: stat.clone(),
+		nextStatus: stat.clone(),
 	}
 	if _, ok := e.objects[id]; ok {
 		panic("molecular.Engine: Object id " + id.String() + " is already exists")
@@ -191,12 +194,35 @@ func (o *Object) SetHeadingVel(v Vec3) {
 	o.headVel = v
 }
 
+func (o *Object)addChild(a *Object){
+	o.nextMux.Lock()
+	defer o.nextMux.Unlock()
+
+	o.nextStatus.children = append(o.nextStatus.children, a)
+}
+
+func (o *Object)removeChild(a *Object){
+	o.nextMux.Lock()
+	defer o.nextMux.Unlock()
+
+	last := len(o.nextStatus.children) - 1
+	for i, b := range o.nextStatus.children {
+		if b == a {
+			o.nextStatus.children[i] = o.nextStatus.children[last]
+			o.nextStatus.children = o.nextStatus.children[:last]
+			return
+		}
+	}
+}
+
 // AttachTo will change the object's anchor to another.
 // The new position will be calculated at the same time.
 // AttachTo must be called inside the object's tick
 func (o *Object) AttachTo(anchor *Object) {
-	o.lastMux.RLock()
-	defer o.lastMux.RUnlock()
+	o.RLock()
+	defer o.RUnlock()
+	o.nextMux.Lock()
+	defer o.nextMux.Unlock()
 
 	if anchor == nil {
 		panic("molecular.Object: new anchor cannot be nil")
@@ -210,38 +236,40 @@ func (o *Object) AttachTo(anchor *Object) {
 	}
 
 	var (
-		p  = o.lastStatus.pos
-		v  = o.lastStatus.velocity
-		v2 = anchor.lastStatus.velocity
+		p  = o.pos
+		v  = o.velocity
+		v2 = anchor.velocity
 	)
-	p.Sub(anchor.lastStatus.pos)
+	p.Sub(anchor.pos)
 	o.forEachAnchor(func(a *Object) {
-		p.Add(a.lastStatus.pos)
+		p.Add(a.pos)
 		v.
-			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
-			Add(a.lastStatus.velocity)
+			ScaleN(o.e.ReLorentzFactorSq(a.velocity.SqLen())).
+			Add(a.velocity)
 	})
 	anchor.forEachAnchor(func(a *Object) {
-		p.Sub(a.lastStatus.pos)
+		p.Sub(a.pos)
 		v2.
-			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
-			Add(a.lastStatus.velocity)
+			ScaleN(o.e.ReLorentzFactorSq(a.velocity.SqLen())).
+			Add(a.velocity)
 	})
 	v.Sub(v2)
-	o.anchor = anchor
-	o.pos = p
-	o.velocity = v
+	o.nextStatus.anchor = anchor
+	o.nextStatus.pos = p
+	o.nextStatus.velocity = v
+	o.anchor.removeChild(o)
+	anchor.addChild(o)
 }
 
 // forEachAnchor will invoke the callback function on each anchor object
 func (o *Object) forEachAnchor(cb func(*Object)) {
-	if o.lastStatus.anchor == nil {
+	if o.anchor == nil {
 		return
 	}
-	a := o.lastStatus.anchor
+	a := o.anchor
 
-	a.lastMux.RLock()
-	defer a.lastMux.RUnlock()
+	a.RLock()
+	defer a.RUnlock()
 
 	cb(a)
 	a.forEachAnchor(cb)
@@ -249,25 +277,25 @@ func (o *Object) forEachAnchor(cb func(*Object)) {
 
 // AbsPos returns the position relative to the main anchor
 func (o *Object) AbsPos() (p Vec3) {
-	o.lastMux.RLock()
-	defer o.lastMux.RUnlock()
+	o.RLock()
+	defer o.RUnlock()
 
-	p = o.lastStatus.pos
+	p = o.pos
 	o.forEachAnchor(func(a *Object) {
-		p.Add(a.lastStatus.pos)
+		p.Add(a.pos)
 	})
 	return
 }
 
 func (o *Object) RotatePos(p *Vec3) *Vec3 {
-	o.lastMux.RLock()
-	defer o.lastMux.RUnlock()
+	o.RLock()
+	defer o.RUnlock()
 
 	if o.anchor != nil {
 		p.
-			Sub(o.lastStatus.gcenter).
-			RotateXYZ(o.lastStatus.heading).
-			Add(o.lastStatus.gcenter)
+			Sub(o.gcenter).
+			RotateXYZ(o.heading).
+			Add(o.gcenter)
 	}
 	return p
 }
@@ -281,14 +309,14 @@ func (o *Object) SetVelocity(velocity Vec3) {
 }
 
 func (o *Object) AbsVelocity() (v Vec3) {
-	o.lastMux.RLock()
-	defer o.lastMux.RUnlock()
+	o.RLock()
+	defer o.RUnlock()
 
-	v = o.lastStatus.velocity
+	v = o.velocity
 	o.forEachAnchor(func(a *Object) {
 		v.
-			ScaleN(o.e.ReLorentzFactorSq(a.lastStatus.velocity.SqLen())).
-			Add(a.lastStatus.velocity)
+			ScaleN(o.e.ReLorentzFactorSq(a.velocity.SqLen())).
+			Add(a.velocity)
 	})
 	return
 }
@@ -302,23 +330,24 @@ func (o *Object) SetType(t ObjType) {
 }
 
 func (o *Object) Blocks() []Block {
-	return o.blocks
+	return o.nextStatus.blocks
 }
 
 func (o *Object) SetBlocks(blocks []Block) {
-	o.blocks = blocks
+	o.nextStatus.blocks = blocks
 }
 
 func (o *Object) AddBlock(b ...Block) {
-	o.blocks = append(o.blocks, b...)
+	o.nextStatus.blocks = append(o.nextStatus.blocks, b...)
 }
 
 func (o *Object) RemoveBlock(target Block) {
-	last := len(o.blocks) - 1
-	for i, b := range o.blocks {
+	blocks := o.nextStatus.blocks
+	last := len(blocks) - 1
+	for i, b := range blocks {
 		if b == target {
-			o.blocks[i] = o.blocks[last]
-			o.blocks = o.blocks[:last]
+			blocks[i] = blocks[last]
+			o.nextStatus.blocks = blocks[:last]
 			return
 		}
 	}
@@ -335,16 +364,16 @@ func (o *Object) GField() *GravityField {
 	return o.gfield
 }
 
-// SetGField sets the gravitational field
-func (o *Object) SetGField(field *GravityField) {
-	o.gfield = field
-}
+// // SetGField sets the gravitational field
+// func (o *Object) SetGField(field *GravityField) {
+// 	o.gfield = field
+// }
 
 func (o *Object) reLorentzFactor() float64 {
-	if o.lastStatus.anchor == nil {
+	if o.anchor == nil {
 		return 1
 	}
-	return o.e.ReLorentzFactorSq(o.lastStatus.velocity.Len()) * o.lastStatus.anchor.reLorentzFactor()
+	return o.e.ReLorentzFactorSq(o.velocity.Len()) * o.anchor.reLorentzFactor()
 }
 
 func (o *Object) ProperTime(dt float64) float64 {
@@ -352,8 +381,8 @@ func (o *Object) ProperTime(dt float64) float64 {
 }
 
 func (o *Object) tick(dt float64) {
-	o.Lock()
-	defer o.Unlock()
+	o.nextMux.Lock()
+	defer o.nextMux.Unlock()
 
 	rlf := o.reLorentzFactor()
 	apt := o.anchor.ProperTime(dt)
@@ -364,22 +393,24 @@ func (o *Object) tick(dt float64) {
 
 	// reset the state
 	o.tickForce = ZeroVec
-	o.gcenter = ZeroVec
+	gcenter := ZeroVec
 
 	// tick blocks
 	mass := 0.0
-	for i, b := range o.blocks {
+	for _, b := range o.blocks {
 		b.Tick(pt, o)
 		l := b.Outline()
 		m := b.Mass()
 		mass += m
 		c := l.Center()
-		if i == 0 {
-			o.gcenter = c
+		if mass == 0 {
+			gcenter = c
 		} else {
-			o.gcenter.Add(c.Subbed(o.gcenter).ScaledN(m / mass))
+			gcenter.Add(c.Subbed(gcenter).ScaledN(m / mass))
 		}
 	}
+	o.nextStatus.gcenter = gcenter
+
 	pos := o.AbsPos()
 	{ // apply the gravity
 		factor := mass / rlf
@@ -388,7 +419,7 @@ func (o *Object) tick(dt float64) {
 			smallestO *Object
 		)
 		v := o.AbsVelocity()
-		for a, g := range o.lastStatus.passedGravity {
+		for a, g := range o.passedGravity {
 			l := v.Subbed(a.AbsVelocity()).SqLen()
 			if smallestL > l {
 				smallestL = l
@@ -400,7 +431,7 @@ func (o *Object) tick(dt float64) {
 				o.tickForce.Add(f)
 			} else {
 				g.release()
-				delete(o.lastStatus.passedGravity, a)
+				delete(o.passedGravity, a)
 			}
 		}
 		if smallestO != nil {
@@ -408,7 +439,7 @@ func (o *Object) tick(dt float64) {
 		}
 	}
 	if mass > 0 {
-		o.velocity.Add(o.tickForce.ScaledN(pt / mass))
+		o.nextStatus.velocity.Add(o.tickForce.ScaledN(pt / mass))
 	} else if mass < 0 {
 		mass = 0
 	}
@@ -416,47 +447,47 @@ func (o *Object) tick(dt float64) {
 	moved := false
 	{ // calculate the new position and angle
 		// d = (vi + vf) / 2 * ∆t
-		vel := o.lastStatus.velocity
-		vel.Add(o.velocity)
+		vel := o.nextStatus.velocity
+		vel.Add(o.nextStatus.velocity)
 		vel.ScaleN(apt / 2)
 		if vel.SqLen() > o.e.minSpeedSq {
 			o.pos.Add(vel)
 			moved = true
 		}
-		av := o.lastStatus.headVel
+		av := o.headVel
 		av.Add(o.headVel)
 		av.ScaleN(apt / 2)
-		o.heading.Add(av).ModN(math.Pi)
+		o.nextStatus.heading.Add(av).ModN(math.Pi)
 	}
 
 	// queue gravity change event
-	gcenter := o.AbsPos()
-	gcenter.Add(o.gcenter)
-	if o.gfield != nil {
-		lastNil := o.lastStatus.gfield == nil
+	center := o.AbsPos()
+	center.Add(gcenter)
+	if gfield := o.nextStatus.gfield; gfield != nil {
+		lastNil := o.gfield == nil
 		if lastNil {
 			o.gtick = 0
 		} else {
 			o.gtick++
 		}
 		if o.typ == ManMadeObj {
-			if lastNil || mass != o.gfield.Mass() {
-				o.gfield.SetMass(mass)
+			if lastNil || mass != gfield.Mass() {
+				gfield.SetMass(mass)
 				if mass > 0 {
-					o.e.queueEvent(o.e.newGravityWave(o, gcenter, o.gfield, o.gtick))
+					o.e.queueEvent(o.e.newGravityWave(o, center, gfield, o.gtick))
 				}
 			}
 		} else if lastNil || moved {
-			o.e.queueEvent(o.e.newGravityWave(o, gcenter, o.gfield, o.gtick))
+			o.e.queueEvent(o.e.newGravityWave(o, center, gfield, o.gtick))
 		}
 	}
 }
 
 func (o *Object) saveStatus() {
-	o.RLock()
-	defer o.RUnlock()
-	o.lastMux.Lock()
-	defer o.lastMux.Unlock()
+	o.Lock()
+	defer o.Unlock()
+	o.nextMux.RLock()
+	defer o.nextMux.RUnlock()
 
-	o.lastStatus.from(&o.objStatus)
+	o.objStatus.from(&o.nextStatus)
 }

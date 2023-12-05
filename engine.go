@@ -31,6 +31,7 @@ type Engine struct {
 	// the main anchor object must be invincible and unmovable
 	mainAnchor *Object
 	// objects save all the Object instance but not mainAnchor
+	// TODO: should we use tree/map structure instead of flat?
 	objects map[uuid.UUID]*Object
 	events  []*eventWave
 }
@@ -67,7 +68,7 @@ func (e *Engine) MainAnchor() *Object {
 	return e.mainAnchor
 }
 
-// NewObject will create an object use v7 UUID
+// NewObject will create an object use random v7 UUID
 func (e *Engine) NewObject(typ ObjType, anchor *Object, pos Vec3) (o *Object) {
 	stat := makeObjStatus()
 	stat.anchor = anchor
