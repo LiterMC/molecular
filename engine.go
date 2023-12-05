@@ -32,7 +32,7 @@ type Engine struct {
 	mainAnchor *Object
 	// objects save all the Object instance but not mainAnchor
 	objects map[uuid.UUID]*Object
-	events  []eventWave
+	events  []*eventWave
 }
 
 func NewEngine(cfg Config) (e *Engine) {
@@ -69,22 +69,35 @@ func (e *Engine) MainAnchor() *Object {
 
 // NewObject will create an object use v7 UUID
 func (e *Engine) NewObject(typ ObjType, anchor *Object, pos Vec3) (o *Object) {
-	e.Lock()
-	defer e.Unlock()
-
 	stat := makeObjStatus()
 	stat.anchor = anchor
 	stat.pos = pos
-	o = e.newObjectLocked(stat)
+
+	e.Lock()
+	defer e.Unlock()
+
+	id := e.generateObjectId()
+	o = e.newAndPutObject(id, stat)
 	o.SetType(typ)
 	return
 }
 
-func (e *Engine) newObjectLocked(stat objStatus) *Object {
+func (e *Engine) newObjectFromStatus(id uuid.UUID, stat objStatus, processors ...func(*Object)) (o *Object) {
+	e.Lock()
+	defer e.Unlock()
+
+	o = e.newAndPutObject(id, stat)
+	for _, p := range processors {
+		p(o)
+	}
+	return
+}
+
+func (e *Engine) generateObjectId() uuid.UUID {
 	for i := 20; i > 0; i-- {
 		if id, err := uuid.NewV7(); err == nil {
 			if _, ok := e.objects[id]; !ok {
-				return e.newAndPutObject(id, stat)
+				return id
 			}
 		}
 	}
@@ -107,11 +120,12 @@ func (e *Engine) ForeachObject(cb func(o *Object)) {
 	}
 }
 
-func (e *Engine) Events() []eventWave {
-	return e.events
+// Events returns the length of event waves
+func (e *Engine) Events() int {
+	return len(e.events)
 }
 
-func (e *Engine) queueEvent(event eventWave) {
+func (e *Engine) queueEvent(event *eventWave) {
 	if event == nil {
 		return
 	}
@@ -138,18 +152,16 @@ func (e *Engine) tickLocked(wg *sync.WaitGroup, dt float64) {
 	defer e.RUnlock()
 
 	for _, o := range e.objects {
-		if o.IsReady() {
-			wg.Add(1)
-			go func(o *Object) {
-				defer wg.Done()
-				o.tick(dt)
-			}(o)
-		}
+		wg.Add(1)
+		go func(o *Object) {
+			defer wg.Done()
+			o.tick(dt)
+		}(o)
 	}
 	for _, event := range e.events {
 		if event.Heavy() {
 			wg.Add(1)
-			go func(event eventWave) {
+			go func(event *eventWave) {
 				defer wg.Done()
 				event.Tick(dt, e)
 			}(event)
@@ -164,18 +176,16 @@ func (e *Engine) saveStatusLocked(wg *sync.WaitGroup) {
 	defer e.Unlock()
 
 	for _, o := range e.objects {
-		if o.IsReady() {
-			wg.Add(1)
-			go func(o *Object) {
-				defer wg.Done()
-				o.saveStatus()
-			}(o)
-		}
+		wg.Add(1)
+		go func(o *Object) {
+			defer wg.Done()
+			o.saveStatus()
+		}(o)
 	}
 	for i := 0; i < len(e.events); {
 		event := e.events[i]
 		if event.AliveTime() == 0 {
-			event.OnRemoved()
+			event.free()
 			e.events[i] = e.events[len(e.events)-1]
 			e.events = e.events[:len(e.events)-1]
 		} else {

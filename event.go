@@ -5,27 +5,13 @@ import (
 	"sync"
 )
 
-type eventWave interface {
-	Sender() *Object
-	// Pos returns the absolute start position when the event was sent
-	Pos() Vec3
-	// If AliveTime returns zero, the event will be removed
-	AliveTime() float64
-	MaxSpeed() float64
-	MaxRadius() float64
-	// should this event starts from a separate goroutine
-	Heavy() bool
-	Tick(dt float64, e *Engine)
-	OnRemoved()
-}
-
-var eventWaveFnPool = sync.Pool{
+var eventWavePool = sync.Pool{
 	New: func() any {
-		return new(eventWaveFn)
+		return new(eventWave)
 	},
 }
 
-type eventWaveFn struct {
+type eventWave struct {
 	sender                   *Object
 	pos                      Vec3
 	alive                    float64
@@ -33,18 +19,15 @@ type eventWaveFn struct {
 	radius, maxRadius        float64
 	heavy                    bool
 	on                       func(receiver *Object)
-	onBeforeTick             func(*eventWaveFn) bool
+	onBeforeTick             func(*eventWave) bool
 	onRemove                 func()
-	triggered, lastTriggered set[*Object]
 	objsCache                []*Object
 	delay, tick              int
 	skipped                  float64
 }
 
-var _ eventWave = (*eventWaveFn)(nil)
-
-func newEventWave(sender *Object, pos Vec3, radius float64, on func(receiver *Object), heavy bool) (e *eventWaveFn) {
-	e = eventWaveFnPool.Get().(*eventWaveFn)
+func newEventWave(sender *Object, pos Vec3, radius float64, on func(receiver *Object), heavy bool) (e *eventWave) {
+	e = eventWavePool.Get().(*eventWave)
 	e.sender = sender
 	e.pos = pos
 	e.alive = 60 * 60 // 1 hour
@@ -53,40 +36,37 @@ func newEventWave(sender *Object, pos Vec3, radius float64, on func(receiver *Ob
 	e.maxRadius = radius
 	e.on = on
 	e.heavy = heavy
-	if e.triggered == nil {
-		e.triggered = make(set[*Object], 10)
-		e.lastTriggered = make(set[*Object], 10)
-	} else {
-		e.triggered.Clear()
-	}
 	return
 }
 
-func (f *eventWaveFn) Sender() *Object {
+func (f *eventWave) Sender() *Object {
 	return f.sender
 }
 
-func (f *eventWaveFn) Pos() Vec3 {
+// Pos returns the absolute start position when the event was sent
+func (f *eventWave) Pos() Vec3 {
 	return f.pos
 }
 
-func (f *eventWaveFn) AliveTime() float64 {
+// If AliveTime returns zero, the event will be removed
+func (f *eventWave) AliveTime() float64 {
 	return f.alive
 }
 
-func (f *eventWaveFn) MaxSpeed() float64 {
+func (f *eventWave) MaxSpeed() float64 {
 	return f.speed
 }
 
-func (f *eventWaveFn) MaxRadius() float64 {
+func (f *eventWave) MaxRadius() float64 {
 	return f.maxRadius
 }
 
-func (f *eventWaveFn) Heavy() bool {
+// should this event starts from a separate goroutine
+func (f *eventWave) Heavy() bool {
 	return f.heavy
 }
 
-func (f *eventWaveFn) Tick(dt float64, e *Engine) {
+func (f *eventWave) Tick(dt float64, e *Engine) {
 	if f.delay > 0 {
 		f.skipped += dt
 		if f.tick++; f.tick < f.delay {
@@ -110,19 +90,17 @@ func (f *eventWaveFn) Tick(dt float64, e *Engine) {
 		f.alive = 0
 	}
 	f.objsCache = e.appendObjsInsideRing(f.objsCache[:0], f.pos, lastr, f.radius)
-	f.triggered, f.lastTriggered = f.lastTriggered, f.triggered
-	f.triggered.Clear()
 	for _, o := range f.objsCache {
-		if f.lastTriggered.Has(o) || o == f.sender {
+		if o == f.sender {
 			continue
 		}
-		f.triggered.Put(o)
 		f.on(o)
 	}
 	f.objsCache = f.objsCache[:0]
 }
 
-func (f *eventWaveFn) OnRemoved() {
+// free will call onRemove and put this eventWave object into the pool
+func (f *eventWave) free() {
 	f.on = nil
 	if f.onRemove != nil {
 		f.onRemove()
@@ -131,11 +109,11 @@ func (f *eventWaveFn) OnRemoved() {
 	if f.onBeforeTick != nil {
 		f.onBeforeTick = nil
 	}
-	eventWaveFnPool.Put(f)
+	eventWavePool.Put(f)
 }
 
 const (
-	maxR0 = (float64)(int(1) << (iota * 2)) * (C / 100.)
+	maxR0 = (float64)(int(1)<<(iota*2)) * (C / 100.)
 	maxR1
 	maxR2
 	maxR3
@@ -149,9 +127,8 @@ const (
 var maxRs = [...]float64{maxR0, maxR1, maxR2, maxR3, maxR4, maxR5, maxR6, maxR7}
 
 // How does gravity wave works:
-// - r < C: instant gravity
-// - else: update gravity per 128 ticks
-func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, tick uint16) eventWave {
+// - r < maxRs[n]: update per 1 << n*2 ticks
+func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, tick uint16) *eventWave {
 	g := gravityStatusPool.Get().(*gravityStatus)
 	g.f = *f
 	g.pos = center
@@ -183,46 +160,48 @@ func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, ti
 		r.passedGravity[sender] = g
 	}, true)
 	w.onRemove = g.release
-	w.onBeforeTick = func(e *eventWaveFn) bool {
-		switch {
-		case e.radius > maxR8:
-			if e.delay != 1 << (8 * 2) {
-				e.delay = 1 << (8 * 2)
-			}
-		case e.radius > maxR7:
-			if e.delay != 1 << (7 * 2) {
-				e.delay = 1 << (7 * 2)
-			}
-		case e.radius > maxR6:
-			if e.delay != 1 << (6 * 2) {
-				e.delay = 1 << (6 * 2)
-			}
-		case e.radius > maxR5:
-			if e.delay != 1 << (5 * 2) {
-				e.delay = 1 << (5 * 2)
-			}
-		case e.radius > maxR4:
-			if e.delay != 1 << (4 * 2) {
-				e.delay = 1 << (4 * 2)
-			}
-		case e.radius > maxR3:
-			if e.delay != 1 << (3 * 2) {
-				e.delay = 1 << (3 * 2)
-			}
-		case e.radius > maxR2:
-			if e.delay != 1 << (2 * 2) {
-				e.delay = 1 << (2 * 2)
-			}
-		case e.radius > maxR1:
-			if e.delay != 1 << (1 * 2) {
-				e.delay = 1 << (1 * 2)
-			}
-		case e.radius > maxR0:
-			if e.delay != 1 << (0 * 2) {
-				e.delay = 1 << (0 * 2)
-			}
-		}
-		return false
-	}
+	w.onBeforeTick = gravityEventBeforeTick
 	return w
+}
+
+func gravityEventBeforeTick(e *eventWave) bool {
+	switch {
+	case e.radius > maxR8:
+		if e.delay != 1<<(8*2) {
+			e.delay = 1 << (8 * 2)
+		}
+	case e.radius > maxR7:
+		if e.delay != 1<<(7*2) {
+			e.delay = 1 << (7 * 2)
+		}
+	case e.radius > maxR6:
+		if e.delay != 1<<(6*2) {
+			e.delay = 1 << (6 * 2)
+		}
+	case e.radius > maxR5:
+		if e.delay != 1<<(5*2) {
+			e.delay = 1 << (5 * 2)
+		}
+	case e.radius > maxR4:
+		if e.delay != 1<<(4*2) {
+			e.delay = 1 << (4 * 2)
+		}
+	case e.radius > maxR3:
+		if e.delay != 1<<(3*2) {
+			e.delay = 1 << (3 * 2)
+		}
+	case e.radius > maxR2:
+		if e.delay != 1<<(2*2) {
+			e.delay = 1 << (2 * 2)
+		}
+	case e.radius > maxR1:
+		if e.delay != 1<<(1*2) {
+			e.delay = 1 << (1 * 2)
+		}
+	case e.radius > maxR0:
+		if e.delay != 1<<(0*2) {
+			e.delay = 1 << (0 * 2)
+		}
+	}
+	return false
 }

@@ -1,13 +1,13 @@
 package molecular_test
 
 import (
+	. "github.com/LiterMC/molecular"
 	"math"
 	"testing"
-	. "github.com/LiterMC/molecular"
 )
 
 const (
-	maxR0 = (float64)(int(1) << (iota * 2)) * (C / 100.)
+	maxR0 = (float64)(int(1)<<(iota*2)) * (C / 100.)
 	maxR1
 	maxR2
 	maxR3
@@ -20,45 +20,45 @@ const (
 
 type eventWaveFn struct {
 	radius float64
-	delay int
+	delay  int
 }
 
 func beforeTickSwitch(e *eventWaveFn) bool {
 	switch {
 	case e.radius > maxR8:
-		if e.delay != 1 << (8 * 2) {
+		if e.delay != 1<<(8*2) {
 			e.delay = 1 << (8 * 2)
 		}
 	case e.radius > maxR7:
-		if e.delay != 1 << (7 * 2) {
+		if e.delay != 1<<(7*2) {
 			e.delay = 1 << (7 * 2)
 		}
 	case e.radius > maxR6:
-		if e.delay != 1 << (6 * 2) {
+		if e.delay != 1<<(6*2) {
 			e.delay = 1 << (6 * 2)
 		}
 	case e.radius > maxR5:
-		if e.delay != 1 << (5 * 2) {
+		if e.delay != 1<<(5*2) {
 			e.delay = 1 << (5 * 2)
 		}
 	case e.radius > maxR4:
-		if e.delay != 1 << (4 * 2) {
+		if e.delay != 1<<(4*2) {
 			e.delay = 1 << (4 * 2)
 		}
 	case e.radius > maxR3:
-		if e.delay != 1 << (3 * 2) {
+		if e.delay != 1<<(3*2) {
 			e.delay = 1 << (3 * 2)
 		}
 	case e.radius > maxR2:
-		if e.delay != 1 << (2 * 2) {
+		if e.delay != 1<<(2*2) {
 			e.delay = 1 << (2 * 2)
 		}
 	case e.radius > maxR1:
-		if e.delay != 1 << (1 * 2) {
+		if e.delay != 1<<(1*2) {
 			e.delay = 1 << (1 * 2)
 		}
 	case e.radius > maxR0:
-		if e.delay != 1 << (0 * 2) {
+		if e.delay != 1<<(0*2) {
 			e.delay = 1 << (0 * 2)
 		}
 	}
@@ -67,13 +67,13 @@ func beforeTickSwitch(e *eventWaveFn) bool {
 
 func beforeTickMath(e *eventWaveFn) bool {
 	if e.radius >= maxR8 {
-		if e.delay != 1 << (8 * 2) {
+		if e.delay != 1<<(8*2) {
 			e.delay = 1 << (8 * 2)
 		}
-	}else{
+	} else {
 		n := (int)(math.Log2(e.radius / (C / 100.)))
 		if n > 0 {
-			if e.delay != 1 << n {
+			if e.delay != 1<<n {
 				e.delay = 1 << n
 			}
 		}
@@ -81,13 +81,12 @@ func beforeTickMath(e *eventWaveFn) bool {
 	return false
 }
 
-
-func BenchmarkEventWaveRadiusCheckSwitch(b *testing.B){
+func BenchmarkEventWaveRadiusCheckSwitch(b *testing.B) {
 	events := make([]*eventWaveFn, 10)
 	for i, _ := range events {
 		events[i] = &eventWaveFn{
 			radius: r.Float64() * C * 2,
-			delay: 0,
+			delay:  0,
 		}
 	}
 	b.ResetTimer()
@@ -98,12 +97,12 @@ func BenchmarkEventWaveRadiusCheckSwitch(b *testing.B){
 	}
 }
 
-func BenchmarkEventWaveRadiusCheckMath(b *testing.B){
+func BenchmarkEventWaveRadiusCheckMath(b *testing.B) {
 	events := make([]*eventWaveFn, 10)
 	for i, _ := range events {
 		events[i] = &eventWaveFn{
 			radius: r.Float64() * C * 2,
-			delay: 0,
+			delay:  0,
 		}
 	}
 	b.ResetTimer()
@@ -113,4 +112,3 @@ func BenchmarkEventWaveRadiusCheckMath(b *testing.B){
 		}
 	}
 }
-

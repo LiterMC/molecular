@@ -104,7 +104,7 @@ type Object struct {
 	e      *Engine
 	id     uuid.UUID // a v7 UUID
 	typ    ObjType
-	blocks []Block
+	blocks []Block // TODO: sort or index blocks
 	objStatus
 
 	lastMux    sync.RWMutex
@@ -150,16 +150,6 @@ func (o *Object) Id() uuid.UUID {
 // Engine returns the engine of the object
 func (o *Object) Engine() *Engine {
 	return o.e
-}
-
-// IsReady returns true when the object is ready to tick
-func (o *Object) IsReady() bool {
-	return o.ready.Load()
-}
-
-// Ready makes the IsReady returns true
-func (o *Object) Ready() {
-	o.ready.Store(true)
 }
 
 // Anchor returns this object's anchor object
@@ -319,8 +309,19 @@ func (o *Object) SetBlocks(blocks []Block) {
 	o.blocks = blocks
 }
 
-func (o *Object) AddBlock(b Block) {
-	o.blocks = append(o.blocks, b)
+func (o *Object) AddBlock(b ...Block) {
+	o.blocks = append(o.blocks, b...)
+}
+
+func (o *Object) RemoveBlock(target Block) {
+	last := len(o.blocks) - 1
+	for i, b := range o.blocks {
+		if b == target {
+			o.blocks[i] = o.blocks[last]
+			o.blocks = o.blocks[:last]
+			return
+		}
+	}
 }
 
 // TickForce returns the force vector that can be edit during a tick.
