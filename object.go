@@ -33,10 +33,12 @@ func (t ObjType) String() string {
 type objStatus struct {
 	anchor        *Object
 	children      []*Object
-	blocks        []Block // TODO: sort or index blocks
-	gcenter       Vec3 // the gravity center
-	gfield        *GravityField
-	pos           Vec3 // the position relative to the anchor
+	anchorPos     map[*Object]Vec3 // anchorPos only exists on the main anchor
+	blocks        []Block          // TODO: sort or index blocks
+	gcenter       Vec3             // the gravity center
+	mass          float64          // the cached mass
+	gfield        *GravityField    // the gravity field
+	pos           Vec3             // the position relative to the anchor
 	tickForce     Vec3
 	velocity      Vec3
 	heading       Vec3 // X=pitch, Y=yaw, Z=roll; facing Z+
@@ -53,8 +55,15 @@ func makeObjStatus() objStatus {
 func (s *objStatus) from(a *objStatus) {
 	s.anchor = a.anchor
 	s.children = append(s.children[:0], a.children...)
+	if s.anchor == nil {
+		clear(s.anchorPos)
+		for o, p := range a.anchorPos {
+			s.anchorPos[o] = p
+		}
+	}
 	s.blocks = append(s.blocks[:0], a.blocks...)
 	s.gcenter = a.gcenter
+	s.mass = a.mass
 	s.heading = a.heading
 	s.pos = a.pos
 	s.tickForce = a.tickForce
@@ -94,6 +103,12 @@ func (s *objStatus) clone() (a objStatus) {
 		a.gfield = new(GravityField)
 		*a.gfield = *s.gfield
 	}
+	a.children = append(make([]*Object, 0, len(s.children)), s.children...)
+	a.anchorPos = make(map[*Object]Vec3, len(s.anchorPos))
+	for o, p := range s.anchorPos {
+		a.anchorPos[o] = p
+	}
+	a.blocks = append(make([]Block, 0, len(s.blocks)), s.blocks...)
 	a.passedGravity = make(map[*Object]*gravityStatus, len(s.passedGravity))
 	for k, v := range s.passedGravity {
 		a.passedGravity[k] = v.clone()
@@ -104,10 +119,10 @@ func (s *objStatus) clone() (a objStatus) {
 // Object represents an object in the physics engine.
 type Object struct {
 	sync.RWMutex
-	ready  atomic.Bool
-	e      *Engine
-	id     uuid.UUID // a v7 UUID
-	typ    ObjType
+	ready atomic.Bool
+	e     *Engine
+	id    uuid.UUID // a v7 UUID
+	typ   ObjType
 	objStatus
 
 	nextMux    sync.RWMutex
@@ -194,14 +209,14 @@ func (o *Object) SetHeadingVel(v Vec3) {
 	o.headVel = v
 }
 
-func (o *Object)addChild(a *Object){
+func (o *Object) addChild(a *Object) {
 	o.nextMux.Lock()
 	defer o.nextMux.Unlock()
 
 	o.nextStatus.children = append(o.nextStatus.children, a)
 }
 
-func (o *Object)removeChild(a *Object){
+func (o *Object) removeChild(a *Object) {
 	o.nextMux.Lock()
 	defer o.nextMux.Unlock()
 
@@ -262,28 +277,104 @@ func (o *Object) AttachTo(anchor *Object) {
 }
 
 // forEachAnchor will invoke the callback function on each anchor object
+// the object has to be read locked before invoke
 func (o *Object) forEachAnchor(cb func(*Object)) {
 	if o.anchor == nil {
 		return
 	}
 	a := o.anchor
 
+	cb(a)
+
 	a.RLock()
 	defer a.RUnlock()
 
-	cb(a)
 	a.forEachAnchor(cb)
+}
+
+// forEachSibling will invoke the callback function on each sibling object
+// the object has to be read locked before invoke
+func (o *Object) forEachSibling(cb func(*Object)) {
+	if o.anchor == nil {
+		return
+	}
+	a := o.anchor
+	for _, s := range a.children {
+		if s != o {
+			cb(s)
+		}
+	}
+}
+
+// MainAnchor returns the main anchor object
+func (o *Object) MainAnchor() (m *Object) {
+	m = o
+	for m.anchor != nil {
+		m = m.anchor
+	}
+	return
 }
 
 // AbsPos returns the position relative to the main anchor
 func (o *Object) AbsPos() (p Vec3) {
-	o.RLock()
-	defer o.RUnlock()
+	p, _ = o.AbsPosAndAnchor()
+	return
+}
 
-	p = o.pos
-	o.forEachAnchor(func(a *Object) {
-		p.Add(a.pos)
-	})
+// AbsPosAndAnchor combine the results of AbsPos and MainAnchor
+func (o *Object) AbsPosAndAnchor() (p Vec3, m *Object) {
+	p, m = o.pos, o
+	for m.anchor != nil {
+		m = m.anchor
+		p.Add(m.pos)
+	}
+	return
+}
+
+var objSetPool = sync.Pool{
+	New: func() any {
+		return make(set[*Object], 8)
+	},
+}
+
+// RelPos returns the relative position of the passed object about this object
+// To be clear, return the displacement from o to a (a.pos - o.pos)
+func (o *Object) RelPos(a *Object) Vec3 {
+	p, m := o.AbsPosAndAnchor()
+	q, n := a.AbsPosAndAnchor()
+	if m == n {
+		q.Sub(p)
+		return q
+	}
+	flags := objSetPool.Get().(*set[*Object])
+	defer objSetPool.Put(flags)
+	clear(*flags)
+	pos, ok := m.findRelPos(n, *flags)
+	if !ok {
+		panic("molecular.Object: calling RelPos() on two unrelative objects")
+	}
+	pos.Add(q).Sub(p)
+	return pos
+}
+
+// findRelPos should only be called on main anchor
+func (o *Object) findRelPos(target *Object, flags set[*Object]) (pos Vec3, ok bool) {
+	if o.anchor != nil {
+		panic("molecular.Object: findRelPos() should only be called on main anchor")
+	}
+	if flags.Has(o) {
+		return
+	}
+	flags.Put(o)
+	if pos, ok = o.anchorPos[target]; ok {
+		return
+	}
+	for a, p := range o.anchorPos {
+		if pos, ok = a.findRelPos(target, flags); ok {
+			pos.Add(p)
+			return
+		}
+	}
 	return
 }
 
@@ -291,12 +382,10 @@ func (o *Object) RotatePos(p *Vec3) *Vec3 {
 	o.RLock()
 	defer o.RUnlock()
 
-	if o.anchor != nil {
-		p.
-			Sub(o.gcenter).
-			RotateXYZ(o.heading).
-			Add(o.gcenter)
-	}
+	p.
+		Sub(o.gcenter).
+		RotateXYZ(o.heading).
+		Add(o.gcenter)
 	return p
 }
 
@@ -309,15 +398,13 @@ func (o *Object) SetVelocity(velocity Vec3) {
 }
 
 func (o *Object) AbsVelocity() (v Vec3) {
-	o.RLock()
-	defer o.RUnlock()
-
-	v = o.velocity
-	o.forEachAnchor(func(a *Object) {
+	v, m := o.velocity, o
+	for m.anchor != nil {
+		m = m.anchor
 		v.
-			ScaleN(o.e.ReLorentzFactorSq(a.velocity.SqLen())).
-			Add(a.velocity)
-	})
+			ScaleN(o.e.ReLorentzFactorSq(m.velocity.SqLen())).
+			Add(m.velocity)
+	}
 	return
 }
 
@@ -369,6 +456,33 @@ func (o *Object) GField() *GravityField {
 // 	o.gfield = field
 // }
 
+func (o *Object) Mass() (mass float64) {
+	mass = o.mass
+	for _, a := range o.children {
+		mass += a.Mass()
+	}
+	return
+}
+
+func (o *Object) GravityCenterAndMass() (center Vec3, mass float64) {
+	center, mass = o.gcenter, o.mass
+	for _, a := range o.children {
+		g, m := a.GravityCenterAndMass()
+		mass += m
+		if mass == 0 {
+			center = g
+		} else {
+			center.Add(g.Subbed(center).ScaledN(m / mass))
+		}
+	}
+	return
+}
+
+func (o *Object) GravityCenter() (center Vec3) {
+	center, _ = o.GravityCenterAndMass()
+	return
+}
+
 func (o *Object) reLorentzFactor() float64 {
 	if o.anchor == nil {
 		return 1
@@ -409,6 +523,7 @@ func (o *Object) tick(dt float64) {
 			gcenter.Add(c.Subbed(gcenter).ScaledN(m / mass))
 		}
 	}
+	o.nextStatus.mass = mass
 	o.nextStatus.gcenter = gcenter
 
 	pos := o.AbsPos()

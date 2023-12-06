@@ -12,18 +12,18 @@ var eventWavePool = sync.Pool{
 }
 
 type eventWave struct {
-	sender                   *Object
-	pos                      Vec3
-	alive                    float64
-	speed                    float64
-	radius, maxRadius        float64
-	heavy                    bool
-	on                       func(receiver *Object)
-	onBeforeTick             func(*eventWave) bool
-	onRemove                 func()
-	objsCache                []*Object
-	delay, tick              int
-	skipped                  float64
+	sender            *Object
+	pos               Vec3
+	alive             float64
+	speed             float64
+	radius, maxRadius float64
+	heavy             bool
+	on                func(receiver *Object)
+	onBeforeTick      func(*eventWave) bool
+	onRemove          func()
+	objsCache         []*Object
+	delay, tick       int
+	skipped           float64
 }
 
 func newEventWave(sender *Object, pos Vec3, radius float64, on func(receiver *Object), heavy bool) (e *eventWave) {
