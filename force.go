@@ -11,15 +11,18 @@ const (
 )
 
 type GravityField struct {
-	mass        float64
-	radius, rSq float64
+	mass   float64
+	radius float64
+	rSq    float64 // radius * radius
+	rCube  float64 // 1 / (radius * radius * radius)
 }
 
 func NewGravityField(mass float64, radius float64) *GravityField {
 	return &GravityField{
 		mass:   mass,
 		radius: radius,
-		rSq:    radius * radius,
+		rSq: radius * radius,
+		rCube:  1 / (radius * radius * radius),
 	}
 }
 
@@ -38,6 +41,7 @@ func (f *GravityField) Radius() float64 {
 func (f *GravityField) SetRadius(radius float64) {
 	f.radius = radius
 	f.rSq = radius * radius
+	f.rCube = 1 / (radius * radius * radius)
 }
 
 // FieldAt returns the acceleration at the distance due to the gravity field
@@ -48,7 +52,7 @@ func (f *GravityField) FieldAt(distance Vec3) Vec3 {
 	}
 	distance.Negate()
 	if lSq < f.rSq {
-		distance.ScaleN(G * f.mass / lSq)
+		distance.ScaleN(G * f.mass * f.rCube)
 	} else {
 		l := math.Sqrt(lSq)
 		// normalize 1 / l and G * m / l ^ 2

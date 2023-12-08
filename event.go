@@ -150,14 +150,14 @@ func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, ti
 	}
 
 	w := newEventWave(sender, center, maxRadius, func(r *Object) {
-		r.Lock()
-		defer r.Unlock()
+		r.nextMux.Lock()
+		defer r.nextMux.Unlock()
 
-		if last := r.passedGravity[sender]; last != nil {
+		if last := r.nextStatus.passedGravity[sender]; last != nil {
 			last.release()
 		}
 		g.count()
-		r.passedGravity[sender] = g
+		r.nextStatus.passedGravity[sender] = g
 	}, true)
 	w.onRemove = g.release
 	w.onBeforeTick = gravityEventBeforeTick

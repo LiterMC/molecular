@@ -127,6 +127,7 @@ type Object struct {
 
 	nextMux    sync.RWMutex
 	nextStatus objStatus
+	nextCalls  []func()
 
 	gtick uint16
 }
@@ -145,19 +146,24 @@ func (e *Engine) newAndPutObject(id uuid.UUID, stat objStatus) (o *Object) {
 		panic("molecular.Engine: Object id " + id.String() + " is already exists")
 	}
 	e.objects[id] = o
+
+	for _, b := range stat.blocks {
+		b.SetObject(o)
+	}
 	return
 }
 
 func (o *Object) String() string {
-	if o.anchor == nil {
-		return "Object[MainAnchor]"
+	anchorId := "nil"
+	if o.anchor != nil {
+		anchorId = o.anchor.id.String()
 	}
 	return fmt.Sprintf(`Object[%s]{
 	anchor=%s,
 	pos=%v,
 	facing=(pitch=%v, yaw=%v, roll=%v),
 	type=%s,
-}`, o.id, o.anchor.id, o.pos, o.heading.X, o.heading.Y, o.heading.Z, o.typ)
+}`, o.id, anchorId, o.pos, o.heading.X, o.heading.Y, o.heading.Z, o.typ)
 }
 
 // An object's id will never be changed
@@ -168,6 +174,14 @@ func (o *Object) Id() uuid.UUID {
 // Engine returns the engine of the object
 func (o *Object) Engine() *Engine {
 	return o.e
+}
+
+func (o *Object) Type() ObjType {
+	return o.typ
+}
+
+func (o *Object) SetType(t ObjType) {
+	o.typ = t
 }
 
 // Anchor returns this object's anchor object
@@ -183,7 +197,7 @@ func (o *Object) Pos() Vec3 {
 
 // SetPos sets the position relative to the anchor
 func (o *Object) SetPos(pos Vec3) {
-	o.pos = pos
+	o.nextStatus.pos = pos
 }
 
 // Heading returns the rotate vector
@@ -196,7 +210,7 @@ func (o *Object) Heading() Vec3 {
 
 // SetHeading sets the heading angles
 func (o *Object) SetHeading(heading Vec3) {
-	o.heading = heading
+	o.nextStatus.heading = heading
 }
 
 // HeadingVel returns the heading velocity vector
@@ -206,7 +220,7 @@ func (o *Object) HeadingVel() Vec3 {
 
 // SetHeadingVel sets the heading velocity vector
 func (o *Object) SetHeadingVel(v Vec3) {
-	o.headVel = v
+	o.nextStatus.headVel = v
 }
 
 func (o *Object) addChild(a *Object) {
@@ -308,6 +322,9 @@ func (o *Object) forEachSibling(cb func(*Object)) {
 
 // MainAnchor returns the main anchor object
 func (o *Object) MainAnchor() (m *Object) {
+	o.RLock()
+	defer o.RUnlock()
+
 	m = o
 	for m.anchor != nil {
 		m = m.anchor
@@ -323,9 +340,17 @@ func (o *Object) AbsPos() (p Vec3) {
 
 // AbsPosAndAnchor combine the results of AbsPos and MainAnchor
 func (o *Object) AbsPosAndAnchor() (p Vec3, m *Object) {
+	o.RLock()
+
 	p, m = o.pos, o
-	for m.anchor != nil {
-		m = m.anchor
+	for {
+		n := m.anchor
+		m.RUnlock()
+		if n == nil {
+			break
+		}
+		m = n
+		m.RLock()
 		p.Add(m.pos)
 	}
 	return
@@ -359,9 +384,13 @@ func (o *Object) RelPos(a *Object) Vec3 {
 
 // findRelPos should only be called on main anchor
 func (o *Object) findRelPos(target *Object, flags set[*Object]) (pos Vec3, ok bool) {
+	o.RLock()
+	defer o.RUnlock()
+
 	if o.anchor != nil {
 		panic("molecular.Object: findRelPos() should only be called on main anchor")
 	}
+
 	if flags.Has(o) {
 		return
 	}
@@ -394,7 +423,7 @@ func (o *Object) Velocity() Vec3 {
 }
 
 func (o *Object) SetVelocity(velocity Vec3) {
-	o.velocity = velocity
+	o.nextStatus.velocity = velocity
 }
 
 func (o *Object) AbsVelocity() (v Vec3) {
@@ -408,24 +437,26 @@ func (o *Object) AbsVelocity() (v Vec3) {
 	return
 }
 
-func (o *Object) Type() ObjType {
-	return o.typ
-}
-
-func (o *Object) SetType(t ObjType) {
-	o.typ = t
-}
-
 func (o *Object) Blocks() []Block {
 	return o.nextStatus.blocks
 }
 
 func (o *Object) SetBlocks(blocks []Block) {
+	o.nextCalls = append(o.nextCalls, func() {
+		for _, b := range blocks {
+			b.SetObject(o)
+		}
+	})
 	o.nextStatus.blocks = blocks
 }
 
-func (o *Object) AddBlock(b ...Block) {
-	o.nextStatus.blocks = append(o.nextStatus.blocks, b...)
+func (o *Object) AddBlock(blocks ...Block) {
+	o.nextCalls = append(o.nextCalls, func() {
+		for _, b := range blocks {
+			b.SetObject(o)
+		}
+	})
+	o.nextStatus.blocks = append(o.nextStatus.blocks, blocks...)
 }
 
 func (o *Object) RemoveBlock(target Block) {
@@ -451,12 +482,15 @@ func (o *Object) GField() *GravityField {
 	return o.gfield
 }
 
-// // SetGField sets the gravitational field
-// func (o *Object) SetGField(field *GravityField) {
-// 	o.gfield = field
-// }
+// SetGField sets the gravitational field
+func (o *Object) SetGField(field *GravityField) {
+	o.nextStatus.gfield = field
+}
 
 func (o *Object) Mass() (mass float64) {
+	o.RLock()
+	defer o.RUnlock()
+
 	mass = o.mass
 	for _, a := range o.children {
 		mass += a.Mass()
@@ -465,6 +499,9 @@ func (o *Object) Mass() (mass float64) {
 }
 
 func (o *Object) GravityCenterAndMass() (center Vec3, mass float64) {
+	o.RLock()
+	defer o.RUnlock()
+
 	center, mass = o.gcenter, o.mass
 	for _, a := range o.children {
 		g, m := a.GravityCenterAndMass()
@@ -512,7 +549,7 @@ func (o *Object) tick(dt float64) {
 	// tick blocks
 	mass := 0.0
 	for _, b := range o.blocks {
-		b.Tick(pt, o)
+		b.Tick(pt)
 		l := b.Outline()
 		m := b.Mass()
 		mass += m
@@ -534,7 +571,7 @@ func (o *Object) tick(dt float64) {
 			smallestO *Object
 		)
 		v := o.AbsVelocity()
-		for a, g := range o.passedGravity {
+		for a, g := range o.nextStatus.passedGravity {
 			l := v.Subbed(a.AbsVelocity()).SqLen()
 			if smallestL > l {
 				smallestL = l
@@ -546,7 +583,7 @@ func (o *Object) tick(dt float64) {
 				o.tickForce.Add(f)
 			} else {
 				g.release()
-				delete(o.passedGravity, a)
+				delete(o.nextStatus.passedGravity, a)
 			}
 		}
 		if smallestO != nil {
@@ -562,15 +599,15 @@ func (o *Object) tick(dt float64) {
 	moved := false
 	{ // calculate the new position and angle
 		// d = (vi + vf) / 2 * ∆t
-		vel := o.nextStatus.velocity
+		vel := o.velocity
 		vel.Add(o.nextStatus.velocity)
 		vel.ScaleN(apt / 2)
 		if vel.SqLen() > o.e.minSpeedSq {
-			o.pos.Add(vel)
+			o.nextStatus.pos.Add(vel)
 			moved = true
 		}
 		av := o.headVel
-		av.Add(o.headVel)
+		av.Add(o.nextStatus.headVel)
 		av.ScaleN(apt / 2)
 		o.nextStatus.heading.Add(av).ModN(math.Pi)
 	}
@@ -604,5 +641,9 @@ func (o *Object) saveStatus() {
 	o.nextMux.RLock()
 	defer o.nextMux.RUnlock()
 
+	for _, cb := range o.nextCalls {
+		cb()
+	}
+	o.nextCalls = o.nextCalls[:0]
 	o.objStatus.from(&o.nextStatus)
 }

@@ -69,7 +69,7 @@ func (e *Engine) MainAnchor() *Object {
 }
 
 // NewObject will create an object use random v7 UUID
-func (e *Engine) NewObject(typ ObjType, anchor *Object, pos Vec3) (o *Object) {
+func (e *Engine) NewObject(typ ObjType, anchor *Object, pos Vec3, processors ...func(*Object)) (o *Object) {
 	stat := makeObjStatus()
 	stat.anchor = anchor
 	stat.pos = pos
@@ -80,6 +80,9 @@ func (e *Engine) NewObject(typ ObjType, anchor *Object, pos Vec3) (o *Object) {
 	id := e.generateObjectId()
 	o = e.newAndPutObject(id, stat)
 	o.SetType(typ)
+	for _, p := range processors {
+		p(o)
+	}
 	return
 }
 
@@ -119,6 +122,14 @@ func (e *Engine) ForeachObject(cb func(o *Object)) {
 	for _, o := range e.objects {
 		cb(o)
 	}
+}
+
+func (e *Engine) ForeachBlock(cb func(b Block)) {
+	e.ForeachObject(func(o *Object){
+		for _, b := range o.blocks {
+			cb(b)
+		}
+	})
 }
 
 // Events returns the length of event waves
