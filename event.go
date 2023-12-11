@@ -1,3 +1,19 @@
+// molecular is a 3D physics engine written in Go
+// Copyright (C) 2023  Kevin Z <zyxkad@gmail.com>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package molecular
 
 import (
@@ -132,7 +148,6 @@ func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, ti
 	g := gravityStatusPool.Get().(*gravityStatus)
 	g.f = *f
 	g.pos = center
-	g.gone = false
 	g.c.Store(1)
 	maxRadius := -1.0
 	if e.cfg.MinAccel > 0 {
@@ -143,6 +158,7 @@ func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, ti
 	for i := (uint16)(2); i != 0 && tick&(i-1) == 0; i <<= 2 {
 		life++
 	}
+	g.life = life
 	if life < len(maxRs) {
 		if maxr := maxRs[life]; maxr < maxRadius {
 			maxRadius = maxr

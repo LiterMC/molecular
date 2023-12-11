@@ -1,3 +1,19 @@
+// molecular is a 3D physics engine written in Go
+// Copyright (C) 2023  Kevin Z <zyxkad@gmail.com>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package molecular
 
 import (
@@ -125,7 +141,7 @@ func (e *Engine) ForeachObject(cb func(o *Object)) {
 }
 
 func (e *Engine) ForeachBlock(cb func(b Block)) {
-	e.ForeachObject(func(o *Object){
+	e.ForeachObject(func(o *Object) {
 		for _, b := range o.blocks {
 			cb(b)
 		}
@@ -151,15 +167,19 @@ func (e *Engine) queueEvent(event *eventWave) {
 func (e *Engine) Tick(dt float64) {
 	var wg sync.WaitGroup
 	// tick objects
-	e.tickLocked(&wg, dt)
+	e.tickObjectLocked(&wg, dt)
 	wg.Wait()
 
-	// save object status
-	e.saveStatusLocked(&wg)
+	// tick events
+	e.tickEventLocked(&wg, dt)
+	wg.Wait()
+
+	// sync object status
+	e.syncStatusLocked(&wg)
 	wg.Wait()
 }
 
-func (e *Engine) tickLocked(wg *sync.WaitGroup, dt float64) {
+func (e *Engine) tickObjectLocked(wg *sync.WaitGroup, dt float64) {
 	e.RLock()
 	defer e.RUnlock()
 
@@ -170,6 +190,12 @@ func (e *Engine) tickLocked(wg *sync.WaitGroup, dt float64) {
 			o.tick(dt)
 		}(o)
 	}
+}
+
+func (e *Engine) tickEventLocked(wg *sync.WaitGroup, dt float64) {
+	e.RLock()
+	defer e.RUnlock()
+
 	for _, event := range e.events {
 		if event.Heavy() {
 			wg.Add(1)
@@ -183,7 +209,7 @@ func (e *Engine) tickLocked(wg *sync.WaitGroup, dt float64) {
 	}
 }
 
-func (e *Engine) saveStatusLocked(wg *sync.WaitGroup) {
+func (e *Engine) syncStatusLocked(wg *sync.WaitGroup) {
 	e.Lock()
 	defer e.Unlock()
 
@@ -194,6 +220,7 @@ func (e *Engine) saveStatusLocked(wg *sync.WaitGroup) {
 			o.saveStatus()
 		}(o)
 	}
+	// remove not alive events
 	for i := 0; i < len(e.events); {
 		event := e.events[i]
 		if event.AliveTime() == 0 {

@@ -1,3 +1,19 @@
+// molecular is a 3D physics engine written in Go
+// Copyright (C) 2023  Kevin Z <zyxkad@gmail.com>
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package molecular
 
 import (
@@ -31,14 +47,14 @@ func (t ObjType) String() string {
 }
 
 type objStatus struct {
+	system        *System
 	anchor        *Object
 	children      []*Object
-	anchorPos     map[*Object]Vec3 // anchorPos only exists on the main anchor
-	blocks        []Block          // TODO: sort or index blocks
-	gcenter       Vec3             // the gravity center
-	mass          float64          // the cached mass
-	gfield        *GravityField    // the gravity field
-	pos           Vec3             // the position relative to the anchor
+	blocks        []Block       // TODO: sort or index blocks
+	gcenter       Vec3          // the gravity center
+	mass          float64       // the cached mass
+	gfield        *GravityField // the gravity field
+	pos           Vec3          // the position relative to the anchor
 	tickForce     Vec3
 	velocity      Vec3
 	heading       Vec3 // X=pitch, Y=yaw, Z=roll; facing Z+
@@ -53,14 +69,9 @@ func makeObjStatus() objStatus {
 }
 
 func (s *objStatus) from(a *objStatus) {
+	s.system = a.system
 	s.anchor = a.anchor
 	s.children = append(s.children[:0], a.children...)
-	if s.anchor == nil {
-		clear(s.anchorPos)
-		for o, p := range a.anchorPos {
-			s.anchorPos[o] = p
-		}
-	}
 	s.blocks = append(s.blocks[:0], a.blocks...)
 	s.gcenter = a.gcenter
 	s.mass = a.mass
@@ -73,18 +84,18 @@ func (s *objStatus) from(a *objStatus) {
 		if g != nil {
 			g.f = v.f
 			g.pos = v.pos
-			g.gone = false
+			g.life = v.life
 			g.c.Store(1)
 		} else {
 			s.passedGravity[k] = v.clone()
 		}
 	}
 	for k, g := range s.passedGravity {
-		if g.gone {
+		if g.life == 0 {
 			g.release()
 			delete(s.passedGravity, k)
 		} else {
-			g.gone = true
+			g.life--
 		}
 	}
 	if a.gfield != nil {
@@ -104,10 +115,6 @@ func (s *objStatus) clone() (a objStatus) {
 		*a.gfield = *s.gfield
 	}
 	a.children = append(make([]*Object, 0, len(s.children)), s.children...)
-	a.anchorPos = make(map[*Object]Vec3, len(s.anchorPos))
-	for o, p := range s.anchorPos {
-		a.anchorPos[o] = p
-	}
 	a.blocks = append(make([]Block, 0, len(s.blocks)), s.blocks...)
 	a.passedGravity = make(map[*Object]*gravityStatus, len(s.passedGravity))
 	for k, v := range s.passedGravity {
@@ -154,6 +161,10 @@ func (e *Engine) newAndPutObject(id uuid.UUID, stat objStatus) (o *Object) {
 }
 
 func (o *Object) String() string {
+	return fmt.Sprintf("Object[%s]", o.id)
+}
+
+func (o *Object) GoString() string {
 	anchorId := "nil"
 	if o.anchor != nil {
 		anchorId = o.anchor.id.String()
@@ -395,10 +406,10 @@ func (o *Object) findRelPos(target *Object, flags set[*Object]) (pos Vec3, ok bo
 		return
 	}
 	flags.Put(o)
-	if pos, ok = o.anchorPos[target]; ok {
+	if pos, ok = o.system.anchorPos[target]; ok {
 		return
 	}
-	for a, p := range o.anchorPos {
+	for a, p := range o.system.anchorPos {
 		if pos, ok = a.findRelPos(target, flags); ok {
 			pos.Add(p)
 			return
@@ -571,7 +582,7 @@ func (o *Object) tick(dt float64) {
 			smallestO *Object
 		)
 		v := o.AbsVelocity()
-		for a, g := range o.nextStatus.passedGravity {
+		for a, g := range o.passedGravity {
 			l := v.Subbed(a.AbsVelocity()).SqLen()
 			if smallestL > l {
 				smallestL = l
@@ -583,10 +594,11 @@ func (o *Object) tick(dt float64) {
 				o.tickForce.Add(f)
 			} else {
 				g.release()
-				delete(o.nextStatus.passedGravity, a)
+				delete(o.passedGravity, a)
 			}
 		}
 		if smallestO != nil {
+			println(smallestL)
 			o.AttachTo(smallestO)
 		}
 	}
@@ -646,4 +658,5 @@ func (o *Object) saveStatus() {
 	}
 	o.nextCalls = o.nextCalls[:0]
 	o.objStatus.from(&o.nextStatus)
+	clear(o.nextStatus.passedGravity)
 }

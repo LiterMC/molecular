@@ -1,4 +1,4 @@
-// molecular is a 3D physics engine
+// molecular is a 3D physics engine written in Go
 // Copyright (C) 2023  Kevin Z <zyxkad@gmail.com>
 //
 // This program is free software: you can redistribute it and/or modify
@@ -17,12 +17,13 @@
 // molecule is a 3D physics engine that designed for realistic star system
 //
 // The default units used by this package:
-// Distance and Position: m (meter)
-// Time: s (second)
-// Speed: m / s (meter per second)
-// Acceleration: m / s^2 (meter per second squared)
-// Mass: kg (kilogram)
-// Force: N or kg*m / s^2 (Newton)
-// Temperature: K (Kelvin)
-// Heat: J or kg*m^2 / s^2 (Joules)
+//
+//	Distance and Position: m (meter)
+//	Time: s (second)
+//	Speed: m / s (meter per second)
+//	Acceleration: m / s^2 (meter per second squared)
+//	Mass: kg (kilogram)
+//	Force: N or kg*m / s^2 (Newton)
+//	Temperature: K (Kelvin)
+//	Heat: J or kg*m^2 / s^2 (Joules)
 package molecular
