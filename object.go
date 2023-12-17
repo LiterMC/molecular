@@ -2,18 +2,19 @@
 // Copyright (C) 2023  Kevin Z <zyxkad@gmail.com>
 //
 // This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
+// it under the terms of the GNU Affero General Public License as published
+// by the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-//
+// 
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
+// GNU Affero General Public License for more details.
+// 
+// You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+ 
 package molecular
 
 import (
@@ -57,14 +58,12 @@ type objStatus struct {
 	pos           Vec3          // the position relative to the anchor
 	tickForce     Vec3
 	velocity      Vec3
-	heading       Vec3 // X=pitch, Y=yaw, Z=roll; facing Z+
+	angle         Vec3
 	headVel       Vec3
-	passedGravity map[*Object]*gravityStatus
 }
 
 func makeObjStatus() objStatus {
 	return objStatus{
-		passedGravity: make(map[*Object]*gravityStatus, 5),
 	}
 }
 
@@ -75,29 +74,10 @@ func (s *objStatus) from(a *objStatus) {
 	s.blocks = append(s.blocks[:0], a.blocks...)
 	s.gcenter = a.gcenter
 	s.mass = a.mass
-	s.heading = a.heading
+	s.angle = a.angle
 	s.pos = a.pos
 	s.tickForce = a.tickForce
 	s.velocity = a.velocity
-	for k, v := range a.passedGravity {
-		g := s.passedGravity[k]
-		if g != nil {
-			g.f = v.f
-			g.pos = v.pos
-			g.life = v.life
-			g.c.Store(1)
-		} else {
-			s.passedGravity[k] = v.clone()
-		}
-	}
-	for k, g := range s.passedGravity {
-		if g.life == 0 {
-			g.release()
-			delete(s.passedGravity, k)
-		} else {
-			g.life--
-		}
-	}
 	if a.gfield != nil {
 		if s.gfield == nil {
 			s.gfield = new(GravityField)
@@ -116,10 +96,6 @@ func (s *objStatus) clone() (a objStatus) {
 	}
 	a.children = append(make([]*Object, 0, len(s.children)), s.children...)
 	a.blocks = append(make([]Block, 0, len(s.blocks)), s.blocks...)
-	a.passedGravity = make(map[*Object]*gravityStatus, len(s.passedGravity))
-	for k, v := range s.passedGravity {
-		a.passedGravity[k] = v.clone()
-	}
 	return
 }
 
@@ -131,6 +107,8 @@ type Object struct {
 	id    uuid.UUID // a v7 UUID
 	typ   ObjType
 	objStatus
+	historyFields  []GravityField
+	gfieldUpdateCd time.Duration
 
 	nextMux    sync.RWMutex
 	nextStatus objStatus
@@ -172,9 +150,9 @@ func (o *Object) GoString() string {
 	return fmt.Sprintf(`Object[%s]{
 	anchor=%s,
 	pos=%v,
-	facing=(pitch=%v, yaw=%v, roll=%v),
+	angle=%s,
 	type=%s,
-}`, o.id, anchorId, o.pos, o.heading.X, o.heading.Y, o.heading.Z, o.typ)
+}`, o.id, anchorId, o.pos, o.angle, o.typ)
 }
 
 // An object's id will never be changed
@@ -211,25 +189,22 @@ func (o *Object) SetPos(pos Vec3) {
 	o.nextStatus.pos = pos
 }
 
-// Heading returns the rotate vector
-// X == pitch
-// Y == yaw
-// Z == roll
-func (o *Object) Heading() Vec3 {
-	return o.heading
+// Angle returns the rotate angles
+func (o *Object) Angle() Vec3 {
+	return o.angle
 }
 
-// SetHeading sets the heading angles
-func (o *Object) SetHeading(heading Vec3) {
-	o.nextStatus.heading = heading
+// SetAngle sets the rotate angles
+func (o *Object) SetAngle(angle Vec3) {
+	o.nextStatus.angle = angle
 }
 
-// HeadingVel returns the heading velocity vector
+// HeadingVel returns the angle velocity vector
 func (o *Object) HeadingVel() Vec3 {
 	return o.headVel
 }
 
-// SetHeadingVel sets the heading velocity vector
+// SetHeadingVel sets the angle velocity vector
 func (o *Object) SetHeadingVel(v Vec3) {
 	o.nextStatus.headVel = v
 }
@@ -424,7 +399,7 @@ func (o *Object) RotatePos(p *Vec3) *Vec3 {
 
 	p.
 		Sub(o.gcenter).
-		RotateXYZ(o.heading).
+		RotateXYZ(o.angle).
 		Add(o.gcenter)
 	return p
 }
@@ -574,29 +549,14 @@ func (o *Object) tick(dt float64) {
 	o.nextStatus.mass = mass
 	o.nextStatus.gcenter = gcenter
 
-	pos := o.AbsPos()
 	{ // apply the gravity
 		factor := mass / rlf
 		var (
 			smallestL float64
 			smallestO *Object
 		)
-		v := o.AbsVelocity()
-		for a, g := range o.passedGravity {
-			l := v.Subbed(a.AbsVelocity()).SqLen()
-			if smallestL > l {
-				smallestL = l
-				smallestO = a
-			}
-			f := g.FieldAt(pos)
-			if f.SqLen() >= o.e.minAccelSq {
-				f.ScaleN(factor)
-				o.tickForce.Add(f)
-			} else {
-				g.release()
-				delete(o.passedGravity, a)
-			}
-		}
+		_ = factor
+		// g.FieldAt(pos).ScaleN(factor)
 		if smallestO != nil {
 			println(smallestL)
 			o.AttachTo(smallestO)
@@ -608,7 +568,6 @@ func (o *Object) tick(dt float64) {
 		mass = 0
 	}
 
-	moved := false
 	{ // calculate the new position and angle
 		// d = (vi + vf) / 2 * ∆t
 		vel := o.velocity
@@ -616,35 +575,13 @@ func (o *Object) tick(dt float64) {
 		vel.ScaleN(apt / 2)
 		if vel.SqLen() > o.e.minSpeedSq {
 			o.nextStatus.pos.Add(vel)
-			moved = true
 		}
 		av := o.headVel
 		av.Add(o.nextStatus.headVel)
 		av.ScaleN(apt / 2)
-		o.nextStatus.heading.Add(av).ModN(math.Pi)
+		o.nextStatus.angle.Add(av).ModN(math.Pi)
 	}
-
-	// queue gravity change event
-	center := o.AbsPos()
-	center.Add(gcenter)
-	if gfield := o.nextStatus.gfield; gfield != nil {
-		lastNil := o.gfield == nil
-		if lastNil {
-			o.gtick = 0
-		} else {
-			o.gtick++
-		}
-		if o.typ == ManMadeObj {
-			if lastNil || mass != gfield.Mass() {
-				gfield.SetMass(mass)
-				if mass > 0 {
-					o.e.queueEvent(o.e.newGravityWave(o, center, gfield, o.gtick))
-				}
-			}
-		} else if lastNil || moved {
-			o.e.queueEvent(o.e.newGravityWave(o, center, gfield, o.gtick))
-		}
-	}
+	o.
 }
 
 func (o *Object) saveStatus() {
@@ -658,5 +595,4 @@ func (o *Object) saveStatus() {
 	}
 	o.nextCalls = o.nextCalls[:0]
 	o.objStatus.from(&o.nextStatus)
-	clear(o.nextStatus.passedGravity)
 }

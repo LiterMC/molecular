@@ -2,30 +2,22 @@
 // Copyright (C) 2023  Kevin Z <zyxkad@gmail.com>
 //
 // This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
+// it under the terms of the GNU Affero General Public License as published
+// by the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-//
+// 
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
+// GNU Affero General Public License for more details.
+// 
+// You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+ 
 package molecular
 
-import (
-	"math"
-	"sync"
-)
-
-var eventWavePool = sync.Pool{
-	New: func() any {
-		return new(eventWave)
-	},
-}
+var eventWavePool = newObjPool[eventWave]()
 
 type eventWave struct {
 	sender            *Object
@@ -43,7 +35,7 @@ type eventWave struct {
 }
 
 func newEventWave(sender *Object, pos Vec3, radius float64, on func(receiver *Object), heavy bool) (e *eventWave) {
-	e = eventWavePool.Get().(*eventWave)
+	e = eventWavePool.Get()
 	e.sender = sender
 	e.pos = pos
 	e.alive = 60 * 60 // 1 hour
@@ -100,12 +92,13 @@ func (f *eventWave) Tick(dt float64, e *Engine) {
 		return
 	}
 	lastr := f.radius
-	f.radius += f.speed * dt
+	rd := f.speed * dt
+	f.radius += rd
 	if f.maxRadius >= 0 && f.radius >= f.maxRadius {
 		f.radius = f.maxRadius
 		f.alive = 0
 	}
-	f.objsCache = e.appendObjsInsideRing(f.objsCache[:0], f.pos, lastr, f.radius)
+	f.objsCache = e.appendObjsInsideRing(f.objsCache[:0], f.pos, lastr, f.radius+rd/2)
 	for _, o := range f.objsCache {
 		if o == f.sender {
 			continue
@@ -126,98 +119,4 @@ func (f *eventWave) free() {
 		f.onBeforeTick = nil
 	}
 	eventWavePool.Put(f)
-}
-
-const (
-	maxR0 = (float64)(int(1)<<(iota*2)) * (C / 100.)
-	maxR1
-	maxR2
-	maxR3
-	maxR4
-	maxR5
-	maxR6
-	maxR7
-	maxR8
-)
-
-var maxRs = [...]float64{maxR0, maxR1, maxR2, maxR3, maxR4, maxR5, maxR6, maxR7}
-
-// How does gravity wave works:
-// - r < maxRs[n]: update per 1 << n*2 ticks
-func (e *Engine) newGravityWave(sender *Object, center Vec3, f *GravityField, tick uint16) *eventWave {
-	g := gravityStatusPool.Get().(*gravityStatus)
-	g.f = *f
-	g.pos = center
-	g.c.Store(1)
-	maxRadius := -1.0
-	if e.cfg.MinAccel > 0 {
-		maxRadius = math.Sqrt(G / e.cfg.MinAccel * f.Mass())
-	}
-
-	life := 0
-	for i := (uint16)(2); i != 0 && tick&(i-1) == 0; i <<= 2 {
-		life++
-	}
-	g.life = life
-	if life < len(maxRs) {
-		if maxr := maxRs[life]; maxr < maxRadius {
-			maxRadius = maxr
-		}
-	}
-
-	w := newEventWave(sender, center, maxRadius, func(r *Object) {
-		r.nextMux.Lock()
-		defer r.nextMux.Unlock()
-
-		if last := r.nextStatus.passedGravity[sender]; last != nil {
-			last.release()
-		}
-		g.count()
-		r.nextStatus.passedGravity[sender] = g
-	}, true)
-	w.onRemove = g.release
-	w.onBeforeTick = gravityEventBeforeTick
-	return w
-}
-
-func gravityEventBeforeTick(e *eventWave) bool {
-	switch {
-	case e.radius > maxR8:
-		if e.delay != 1<<(8*2) {
-			e.delay = 1 << (8 * 2)
-		}
-	case e.radius > maxR7:
-		if e.delay != 1<<(7*2) {
-			e.delay = 1 << (7 * 2)
-		}
-	case e.radius > maxR6:
-		if e.delay != 1<<(6*2) {
-			e.delay = 1 << (6 * 2)
-		}
-	case e.radius > maxR5:
-		if e.delay != 1<<(5*2) {
-			e.delay = 1 << (5 * 2)
-		}
-	case e.radius > maxR4:
-		if e.delay != 1<<(4*2) {
-			e.delay = 1 << (4 * 2)
-		}
-	case e.radius > maxR3:
-		if e.delay != 1<<(3*2) {
-			e.delay = 1 << (3 * 2)
-		}
-	case e.radius > maxR2:
-		if e.delay != 1<<(2*2) {
-			e.delay = 1 << (2 * 2)
-		}
-	case e.radius > maxR1:
-		if e.delay != 1<<(1*2) {
-			e.delay = 1 << (1 * 2)
-		}
-	case e.radius > maxR0:
-		if e.delay != 1<<(0*2) {
-			e.delay = 1 << (0 * 2)
-		}
-	}
-	return false
 }

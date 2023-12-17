@@ -2,44 +2,55 @@
 // Copyright (C) 2023  Kevin Z <zyxkad@gmail.com>
 //
 // This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
+// it under the terms of the GNU Affero General Public License as published
+// by the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-//
+// 
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
+// GNU Affero General Public License for more details.
+// 
+// You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+ 
 package molecular
 
 import (
 	"math"
-	"sync"
-	"sync/atomic"
 )
 
 const (
 	G = 6.674e-11 // The gravitational constant is 6.674×10−11 N⋅m2/kg2
 )
 
+var gravityFieldPool = newObjPool[GravityField]()
+
 type GravityField struct {
+	pos    Vec3
 	mass   float64
 	radius float64
 	rSq    float64 // radius * radius
 	rCube  float64 // 1 / (radius * radius * radius)
 }
 
-func NewGravityField(mass float64, radius float64) *GravityField {
+func NewGravityField(pos Vec3, mass float64, radius float64) *GravityField {
 	return &GravityField{
+		pos:    pos,
 		mass:   mass,
 		radius: radius,
 		rSq:    radius * radius,
 		rCube:  1 / (radius * radius * radius),
 	}
+}
+
+func (f *GravityField) Pos() Vec3 {
+	return f.pos
+}
+
+func (f *GravityField) SetPos(pos Vec3) {
+	f.pos = pos
 }
 
 func (f *GravityField) Mass() float64 {
@@ -60,62 +71,21 @@ func (f *GravityField) SetRadius(radius float64) {
 	f.rCube = 1 / (radius * radius * radius)
 }
 
-// FieldAt returns the acceleration at the distance due to the gravity field
-func (f *GravityField) FieldAt(distance Vec3) Vec3 {
-	lSq := distance.SqLen()
+// FieldAt returns the acceleration at the position due to the gravity field
+func (f *GravityField) FieldAt(pos Vec3) Vec3 {
+	acc := f.pos.Subbed(pos)
+	lSq := acc.SqLen()
 	if lSq == 0 {
 		return ZeroVec
 	}
-	distance.Negate()
 	if lSq < f.rSq {
-		distance.ScaleN(G * f.mass * f.rCube)
+		acc.ScaleN(G * f.mass * f.rCube)
 	} else {
 		l := math.Sqrt(lSq)
 		// normalize 1 / l and G * m / l ^ 2
-		distance.ScaleN(G * f.mass / (lSq * l))
+		acc.ScaleN(G * f.mass / (lSq * l))
 	}
-	return distance
-}
-
-type gravityStatus struct {
-	f   GravityField
-	pos Vec3
-
-	life int
-	c    atomic.Int32
-}
-
-var gravityStatusPool = sync.Pool{
-	New: func() any {
-		return new(gravityStatus)
-	},
-}
-
-func (s *gravityStatus) FieldAt(pos Vec3) Vec3 {
-	return s.f.FieldAt(pos.Subbed(s.pos))
-}
-
-func (s *gravityStatus) clone() (g *gravityStatus) {
-	g = gravityStatusPool.Get().(*gravityStatus)
-	g.f = s.f
-	g.pos = s.pos
-	g.life = s.life
-	g.c.Store(1)
-	return
-}
-
-func (s *gravityStatus) count() {
-	s.c.Add(1)
-}
-
-func (s *gravityStatus) release() {
-	c := s.c.Add(-1)
-	if c < 0 {
-		panic("gravityStatus.count become less than one")
-	}
-	if c == 0 {
-		gravityStatusPool.Put(s)
-	}
+	return acc
 }
 
 // MagnetField represents a simulated magnetic field.

@@ -17,26 +17,30 @@
  
 package molecular
 
-type Facing uint8
-
-//go:generate stringer -type=Facing
-const (
-	TOP Facing = iota
-	BOTTOM
-	LEFT
-	RIGHT
-	FRONT
-	BACK
+import (
+	"sync"
 )
 
-type Block interface {
-	// SetObject will be called when block is inited or it's moving between objects
-	SetObject(o *Object)
-	Mass() float64
-	// Material returns the material of the face, nil is allowed
-	Material(f Facing) *Material
-	// Outline specific the position and the maximum space of the block
-	Outline() *Cube
-	// Tick will be called when the block need to update it's state
-	Tick(dt float64)
+// objPool wrapped a sync.Pool
+type objPool[T any] struct {
+	pool sync.Pool // internal sync pool
+}
+
+func newObjPool[T any]() (p *objPool[T]) {
+	return &objPool[T]{
+		pool: sync.Pool{
+			New: func() any {
+				return new(T)
+			},
+		},
+	}
+}
+
+func (p *objPool[T]) Get() (ptr *T) {
+	ptr = p.pool.Get().(*T)
+	return
+}
+
+func (p *objPool[T]) Put(ptr *T) {
+	p.pool.Put(ptr)
 }
