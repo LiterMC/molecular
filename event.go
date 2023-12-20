@@ -5,24 +5,27 @@
 // it under the terms of the GNU Affero General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
- 
 package molecular
+
+import (
+	"time"
+)
 
 var eventWavePool = newObjPool[eventWave]()
 
 type eventWave struct {
 	sender            *Object
 	pos               Vec3
-	alive             float64
+	alive             time.Duration
 	speed             float64
 	radius, maxRadius float64
 	heavy             bool
@@ -31,14 +34,14 @@ type eventWave struct {
 	onRemove          func()
 	objsCache         []*Object
 	delay, tick       int
-	skipped           float64
+	skipped           time.Duration
 }
 
 func newEventWave(sender *Object, pos Vec3, radius float64, on func(receiver *Object), heavy bool) (e *eventWave) {
 	e = eventWavePool.Get()
 	e.sender = sender
 	e.pos = pos
-	e.alive = 60 * 60 // 1 hour
+	e.alive = time.Hour
 	e.speed = C
 	e.radius = 0
 	e.maxRadius = radius
@@ -57,7 +60,7 @@ func (f *eventWave) Pos() Vec3 {
 }
 
 // If AliveTime returns zero, the event will be removed
-func (f *eventWave) AliveTime() float64 {
+func (f *eventWave) AliveTime() time.Duration {
 	return f.alive
 }
 
@@ -74,7 +77,7 @@ func (f *eventWave) Heavy() bool {
 	return f.heavy
 }
 
-func (f *eventWave) Tick(dt float64, e *Engine) {
+func (f *eventWave) Tick(dt time.Duration, e *Engine) {
 	if f.delay > 0 {
 		f.skipped += dt
 		if f.tick++; f.tick < f.delay {
@@ -92,7 +95,7 @@ func (f *eventWave) Tick(dt float64, e *Engine) {
 		return
 	}
 	lastr := f.radius
-	rd := f.speed * dt
+	rd := f.speed * dt.Seconds()
 	f.radius += rd
 	if f.maxRadius >= 0 && f.radius >= f.maxRadius {
 		f.radius = f.maxRadius

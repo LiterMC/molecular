@@ -5,20 +5,20 @@
 // it under the terms of the GNU Affero General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
- 
 package molecular
 
 import (
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -97,6 +97,9 @@ func (e *Engine) NewObject(typ ObjType, anchor *Object, pos Vec3, processors ...
 	id := e.generateObjectId()
 	o = e.newAndPutObject(id, stat)
 	o.SetType(typ)
+	if anchor != nil {
+		anchor.addChild(o)
+	}
 	for _, p := range processors {
 		p(o)
 	}
@@ -143,6 +146,8 @@ func (e *Engine) ForeachObject(cb func(o *Object)) {
 
 func (e *Engine) ForeachBlock(cb func(b Block)) {
 	e.ForeachObject(func(o *Object) {
+		o.RLock()
+		defer o.RUnlock()
 		for _, b := range o.blocks {
 			cb(b)
 		}
@@ -165,7 +170,7 @@ func (e *Engine) queueEvent(event *eventWave) {
 }
 
 // Tick will call tick on the main anchor
-func (e *Engine) Tick(dt float64) {
+func (e *Engine) Tick(dt time.Duration) {
 	var wg sync.WaitGroup
 	// tick objects
 	e.tickObjectLocked(&wg, dt)
@@ -176,11 +181,11 @@ func (e *Engine) Tick(dt float64) {
 	wg.Wait()
 
 	// sync object status
-	e.syncStatusLocked(&wg)
+	e.syncStatusLocked(&wg, dt)
 	wg.Wait()
 }
 
-func (e *Engine) tickObjectLocked(wg *sync.WaitGroup, dt float64) {
+func (e *Engine) tickObjectLocked(wg *sync.WaitGroup, dt time.Duration) {
 	e.RLock()
 	defer e.RUnlock()
 
@@ -193,7 +198,7 @@ func (e *Engine) tickObjectLocked(wg *sync.WaitGroup, dt float64) {
 	}
 }
 
-func (e *Engine) tickEventLocked(wg *sync.WaitGroup, dt float64) {
+func (e *Engine) tickEventLocked(wg *sync.WaitGroup, dt time.Duration) {
 	e.RLock()
 	defer e.RUnlock()
 
@@ -210,7 +215,7 @@ func (e *Engine) tickEventLocked(wg *sync.WaitGroup, dt float64) {
 	}
 }
 
-func (e *Engine) syncStatusLocked(wg *sync.WaitGroup) {
+func (e *Engine) syncStatusLocked(wg *sync.WaitGroup, dt time.Duration) {
 	e.Lock()
 	defer e.Unlock()
 
@@ -218,7 +223,7 @@ func (e *Engine) syncStatusLocked(wg *sync.WaitGroup) {
 		wg.Add(1)
 		go func(o *Object) {
 			defer wg.Done()
-			o.saveStatus()
+			o.saveStatus(dt)
 		}(o)
 	}
 	// remove not alive events

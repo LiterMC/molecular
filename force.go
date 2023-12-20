@@ -5,16 +5,15 @@
 // it under the terms of the GNU Affero General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
- 
 package molecular
 
 import (
@@ -35,14 +34,14 @@ type GravityField struct {
 	rCube  float64 // 1 / (radius * radius * radius)
 }
 
-func NewGravityField(pos Vec3, mass float64, radius float64) *GravityField {
-	return &GravityField{
-		pos:    pos,
-		mass:   mass,
-		radius: radius,
-		rSq:    radius * radius,
-		rCube:  1 / (radius * radius * radius),
-	}
+func NewGravityField(pos Vec3, mass float64, radius float64) (f *GravityField) {
+	f = gravityFieldPool.Get()
+	f.pos = pos
+	f.mass = mass
+	f.radius = radius
+	f.rSq = radius * radius
+	f.rCube = 1 / (radius * radius * radius)
+	return
 }
 
 func (f *GravityField) Pos() Vec3 {
@@ -69,6 +68,12 @@ func (f *GravityField) SetRadius(radius float64) {
 	f.radius = radius
 	f.rSq = radius * radius
 	f.rCube = 1 / (radius * radius * radius)
+}
+
+func (f *GravityField) Clone() (g *GravityField) {
+	g = gravityFieldPool.Get()
+	*g = *f
+	return
 }
 
 // FieldAt returns the acceleration at the position due to the gravity field
