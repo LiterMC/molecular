@@ -39,11 +39,14 @@ func (e *Engine) ReLorentzFactor(speed float64) float64 {
 
 // ReLorentzFactorSq is same as ReLorentzFactor, but require squared speed as input
 func (e *Engine) ReLorentzFactorSq(speedSq float64) float64 {
-	if speedSq == 0 {
+	if speedSq <= e.minSpeedSq {
 		return 1
 	}
 	if speedSq > e.maxSpeedSq {
 		speedSq = e.maxSpeedSq
+	}
+	if speedSq >= cSq {
+		return math.SmallestNonzeroFloat64 // maybe * 4 ?
 	}
 	return math.Sqrt(1 - speedSq/cSq)
 }

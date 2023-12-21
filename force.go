@@ -78,6 +78,9 @@ func (f *GravityField) Clone() (g *GravityField) {
 
 // FieldAt returns the acceleration at the position due to the gravity field
 func (f *GravityField) FieldAt(pos Vec3) Vec3 {
+	if f == nil {
+		return ZeroVec
+	}
 	acc := f.pos.Subbed(pos)
 	lSq := acc.SqLen()
 	if lSq == 0 {

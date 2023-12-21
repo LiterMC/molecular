@@ -97,7 +97,6 @@ type Object struct {
 	historyGFields   []*GravityField
 	gfieldUpdateMask Bitset
 	gfieldUpdateCd   time.Duration
-	radius float64
 
 	nextMux    sync.RWMutex
 	nextStatus objStatus
@@ -114,7 +113,7 @@ func (e *Engine) newAndPutObject(id uuid.UUID, stat objStatus) (o *Object) {
 		objStatus:  stat,
 		nextStatus: stat.clone(),
 
-		gfield: NewGravityField(ZeroVec, 0, 1),
+		gfield: NewGravityField(ZeroVec, 0, 0),
 		historyGFields: make([]*GravityField, 16), // TODO: maybe dynamically set a suitable history cache?
 	}
 	if _, ok := e.objects[id]; ok {
@@ -171,10 +170,19 @@ func (o *Object) Anchor() *Object {
 	return o.anchor
 }
 
+func (o *Object) AnchorLocked() *Object {
+	return o.anchor
+}
+
 // Pos returns the position relative to the anchor
 func (o *Object) Pos() Vec3 {
 	o.RLock()
 	defer o.RUnlock()
+	return o.pos
+}
+
+// PosLocked returns the position relative to the anchor
+func (o *Object) PosLocked() Vec3 {
 	return o.pos
 }
 
@@ -197,6 +205,22 @@ func (o *Object) SetAngle(angle Vec3) {
 	o.nextStatus.angle = angle
 }
 
+func (o *Object) Velocity() Vec3 {
+	o.RLock()
+	defer o.RUnlock()
+	return o.velocity
+}
+
+func (o *Object) VelocityLocked() Vec3 {
+	return o.velocity
+}
+
+func (o *Object) SetVelocity(velocity Vec3) {
+	o.nextMux.Lock()
+	defer o.nextMux.Unlock()
+	o.nextStatus.velocity = velocity
+}
+
 // HeadingVel returns the angle velocity vector
 func (o *Object) HeadingVel() Vec3 {
 	return o.headVel
@@ -210,16 +234,10 @@ func (o *Object) SetHeadingVel(v Vec3) {
 }
 
 func (o *Object) addChild(a *Object) {
-	o.nextMux.Lock()
-	defer o.nextMux.Unlock()
-
 	o.nextStatus.children = append(o.nextStatus.children, a)
 }
 
 func (o *Object) removeChild(a *Object) {
-	o.nextMux.Lock()
-	defer o.nextMux.Unlock()
-
 	last := len(o.nextStatus.children) - 1
 	for i, b := range o.nextStatus.children {
 		if b == a {
@@ -232,13 +250,20 @@ func (o *Object) removeChild(a *Object) {
 
 // AttachTo will change the object's anchor to another.
 // The new position will be calculated at the same time.
-// AttachTo must be called inside the object's tick
 func (o *Object) AttachTo(anchor *Object) {
+	anchor.RLock()
+	defer anchor.RUnlock()
 	o.RLock()
 	defer o.RUnlock()
 	o.nextMux.Lock()
 	defer o.nextMux.Unlock()
 
+	o.AttachToLocked(anchor)
+}
+
+// AttachToLocked is same as AttachTo, but used under locked condition
+// e.g. inside the object's tick
+func (o *Object) AttachToLocked(anchor *Object) {
 	if anchor == nil {
 		panic("molecular.Object: new anchor cannot be nil")
 	}
@@ -269,6 +294,7 @@ func (o *Object) AttachTo(anchor *Object) {
 			Add(a.velocity)
 	})
 	v.Sub(v2)
+
 	o.nextStatus.anchor = anchor
 	o.nextStatus.pos = p
 	o.nextStatus.velocity = v
@@ -311,9 +337,18 @@ func (o *Object) MainAnchor() (m *Object) {
 	o.RLock()
 	defer o.RUnlock()
 
+	return o.MainAnchorLocked()
+}
+
+// MainAnchorLocked is same as MainAnchor, but used under locked condition
+func (o *Object) MainAnchorLocked() (m *Object) {
 	m = o
-	for m.anchor != nil {
-		m = m.anchor
+	n := m.anchor
+	for n != nil {
+		m = n
+		m.RLock()
+		n = m.anchor
+		m.RUnlock()
 	}
 	return
 }
@@ -321,6 +356,12 @@ func (o *Object) MainAnchor() (m *Object) {
 // AbsPos returns the position relative to the main anchor
 func (o *Object) AbsPos() (p Vec3) {
 	p, _ = o.AbsPosAndAnchor()
+	return
+}
+
+// AbsPosLocked is same as AbsPosAndAnchor, but used under locked condition
+func (o *Object) AbsPosLocked() (p Vec3) {
+	p, _ = o.AbsPosAndAnchorLocked()
 	return
 }
 
@@ -333,20 +374,29 @@ func (o *Object) AbsPosAndAnchor() (p Vec3, m *Object) {
 		n := m.anchor
 		m.RUnlock()
 		if n == nil {
-			break
+			return
 		}
 		m = n
 		m.RLock()
 		p.Add(m.pos)
 	}
+}
+
+// AbsPosAndAnchorLocked is same as AbsPosAndAnchor, but used under locked condition
+func (o *Object) AbsPosAndAnchorLocked() (p Vec3, m *Object) {
+	p, m = o.pos, o
+	n := m.anchor
+	for n != nil {
+		m = n
+		m.RLock()
+		n = m.anchor
+		p.Add(m.pos)
+		m.RUnlock()
+	}
 	return
 }
 
-var objSetPool = sync.Pool{
-	New: func() any {
-		return make(set[*Object], 8)
-	},
-}
+var objSetPool = newObjPool[set[*Object]]()
 
 // RelPos returns the relative position of the passed object about this object
 // To be clear, return the displacement from o to a (a.pos - o.pos)
@@ -357,9 +407,12 @@ func (o *Object) RelPos(a *Object) Vec3 {
 		q.Sub(p)
 		return q
 	}
-	flags := objSetPool.Get().(*set[*Object])
+	flags := objSetPool.Get()
+	if *flags == nil {
+		*flags = make(set[*Object], 8)
+	}
 	defer objSetPool.Put(flags)
-	clear(*flags)
+	defer clear(*flags)
 	pos, ok := m.findRelPos(n, *flags)
 	if !ok {
 		panic("molecular.Object: calling RelPos() on two unrelative objects")
@@ -402,16 +455,6 @@ func (o *Object) RotatePos(p *Vec3) *Vec3 {
 		RotateXYZ(o.angle).
 		Add(o.gcenter)
 	return p
-}
-
-func (o *Object) Velocity() Vec3 {
-	return o.velocity
-}
-
-func (o *Object) SetVelocity(velocity Vec3) {
-	o.nextMux.Lock()
-	defer o.nextMux.Unlock()
-	o.nextStatus.velocity = velocity
 }
 
 func (o *Object) AbsVelocity() (v Vec3) {
@@ -465,12 +508,14 @@ func (o *Object) TickForce() *Vec3 {
 	return &o.tickForce
 }
 
-func (o *Object) Radius() float64 {
-	return o.radius
+func (o *Object) SetRadius(radius float64) {
+	o.gfield.SetRadius(radius)
 }
 
-func (o *Object) SetRadius(radius float64) {
-	o.radius = radius
+func (o *Object) FillGfields() {
+	for i := 0; i < len(o.historyGFields); i++ {
+		o.historyGFields[i] = o.gfield.Clone()
+	}
 }
 
 func (o *Object) Mass() (mass float64) {
@@ -515,20 +560,21 @@ func (o *Object) GravityField() *GravityField {
 // GravityFieldAt will returns the correct history gravity field by position.
 // argument pos is the position relative to the zero position of this object
 func (o *Object)GravityFieldAt(pos Vec3) Vec3 {
-	if pos.SqLen() < o.radius * o.radius * 2 {
+	if o.gfield == nil {
+		return ZeroVec
+	}
+	radius := o.gfield.Radius()
+	if pos.SqLen() < radius * radius * 4 {
 		return o.gfield.FieldAt(pos)
 	}
-	i := math.Ilogb(o.radius / C)
+	i := math.Ilogb(pos.Subbed(o.gfield.Pos()).SqLen() / cSq) / 2
 	if i < 0 {
-		i = 0
+		return o.gfield.FieldAt(pos)
 	}
 	if i >= len(o.historyGFields) {
 		return ZeroVec
 	}
 	g := o.historyGFields[i]
-	if g == nil {
-		return ZeroVec
-	}
 	return g.FieldAt(pos)
 }
 
@@ -536,7 +582,7 @@ func (o *Object) reLorentzFactor() float64 {
 	if o.anchor == nil {
 		return 1
 	}
-	return o.e.ReLorentzFactorSq(o.velocity.Len()) * o.anchor.reLorentzFactor()
+	return o.e.ReLorentzFactorSq(o.velocity.SqLen()) * o.anchor.reLorentzFactor()
 }
 
 func (o *Object) ProperTime(dt time.Duration) float64 {
@@ -544,6 +590,8 @@ func (o *Object) ProperTime(dt time.Duration) float64 {
 }
 
 func (o *Object) tick(dt time.Duration) {
+	o.RLock()
+	defer o.RUnlock()
 	o.nextMux.Lock()
 	defer o.nextMux.Unlock()
 
@@ -572,12 +620,13 @@ func (o *Object) tick(dt time.Duration) {
 			gcenter.Add(c.Subbed(gcenter).ScaledN(m / mass))
 		}
 	}
+	if mass < 0 {
+		mass = 0
+	}
 	o.nextStatus.mass = mass
 	o.nextStatus.gcenter = gcenter
-
-	{ // apply gravities
+	if mass > 0 { // apply gravities
 		pos := o.pos
-		factor := mass / rlf
 		var (
 			vel Vec3
 			smallestL float64
@@ -585,23 +634,21 @@ func (o *Object) tick(dt time.Duration) {
 		)
 		if o.anchor != nil {
 			vel = o.anchor.GravityFieldAt(pos)
-			vel.ScaleN(factor)
+			vel.ScaleN(dt.Seconds())
 			o.forEachSibling(func(s *Object){
 				f := s.GravityFieldAt(pos.Subbed(s.pos))
-				f.ScaleN(factor)
+				f.ScaleN(dt.Seconds())
 				vel.Add(f)
 			})
 		}
 		if smallestO != nil {
 			println(smallestL)
-			o.AttachTo(smallestO)
+			o.AttachToLocked(smallestO)
 		}
 		o.nextStatus.velocity.Add(vel)
 	}
 	if mass > 0 {
 		o.nextStatus.velocity.Add(o.tickForce.ScaledN(pt / mass))
-	} else if mass < 0 {
-		mass = 0
 	}
 
 	{ // calculate the new position and angle
@@ -633,10 +680,8 @@ func (o *Object) saveStatus(dt time.Duration) {
 	o.nextCalls = o.nextCalls[:0]
 	o.objStatus.from(&o.nextStatus)
 
-	// TODO: set correct radius
-	o.gfield.SetPos(o.pos.Added(o.gcenter))
+	o.gfield.SetPos(o.gcenter)
 	o.gfield.SetMass(o.mass)
-	o.gfield.SetRadius(o.radius)
 	if o.gfieldUpdateCd -= dt; o.gfieldUpdateCd < 0 {
 		o.gfieldUpdateCd = time.Second
 
